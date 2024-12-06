@@ -106,6 +106,70 @@ class CellArray :
     def __len__(self):
         return self.M
 
+    def Imix(r, U):
+        return (1 - r) * polyval(self.params.LLRS, U) + r * polyval(self.params.HHRS, U)
+
+    def applyVoltage(self, Ua):
+        """
+        Apply voltages from array U to the corresponding cell in the CellArray
+        if U > UR or if U ≤ US, cell states will be modified
+        """
+        if type(Ua) is np.ndarray:
+            Ua = Ua.astype(float32, copy=False)
+        else:
+            Ua = np.repeat(float32(Ua), self.M)
+
+        Umax = self.params.Umax
+        G_HHRS = self.params.G_HHRS
+        G_LLRS = self.params.G_LLRS
+        HHRS = self.params.HHRS
+        LLRS = self.params.LLRS
+        gamma = self.params.gamma
+        eta = self.params.eta
+        nfeatures = self.params.nfeatures
+
+        self.setMask = ~self.inLRS & (Ua <= US(c))
+        self.resetMask = ~self.inHRS & (Ua > self.UR)
+        self.fullResetMask = self.resetMask & (Ua >= Umax)
+        self.partialResetMask = self.resetMask & (Ua < Umax)
+        self.drawVARMask = self.inLRS & self.resetMask
+        self.resetCoefsCalcMask = self.drawVARMask & ~self.fullResetMask
+
+        if any(self.setMask):
+            self.r[self.setMask] = r(LRS(c)[self.setMask], G_HHRS, G_LLRS)
+            self.inLRS |= self.setMask
+            self.inHRS = self.inHRS & ~self.setMask
+            self.UR[self.setMask] = UR(c)[self.setMask]
+
+        if any(self.drawVARMask):
+            VAR_sample(c)
+            self.n += self.drawVARMask
+            self.y = psi(self.μ, self.σ, gamma(gamma, self.Xhat[-nfeatures:, :]))
+
+        if any(self.resetCoefsCalcMask):
+            x1 = self.UR[self.resetCoefsCalcMask]
+            x2 = Umax
+            y1 = self.Imix(self.r[self.resetCoefsCalcMask], x1)
+            r_HRS = r(HRS(c)[self.resetCoefsCalcMask], G_HHRS, G_LLRS)
+            # y2 = Imix(r_HRS, x2, HHRS, LLRS)
+            y2 = self.Imix(r_HRS, x2)
+            self.resetCoefs[:, self.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, eta)
+
+        if any(self.resetMask):
+            self.inLRS = self.inLRS & ~self.resetMask
+            self.UR[self.resetMask] = Ua[self.resetMask]
+
+        if any(self.partialResetMask):
+            Itrans = Ireset(self.resetCoefs[0, self.partialResetMask], self.resetCoefs[1, self.partialResetMask], Ua[self.partialResetMask], eta, Umax)
+            self.r[self.partialResetMask] = rIU(Itrans, Ua[self.partialResetMask], HHRS, LLRS)
+
+        if any(self.fullResetMask):
+            self.inHRS |= self.fullResetMask
+            self.r[self.fullResetMask] = r(HRS(c)[self.fullResetMask], G_HHRS, G_LLRS)
+
+        return c
+
+
 def load_params(param_fp:str=default_param_fp, p:int=10):
     ### load model parameters from file
     with open(param_fp, 'r', encoding='UTF-8') as f:

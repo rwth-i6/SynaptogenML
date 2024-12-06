@@ -1,6 +1,8 @@
-from torch import nn
-import torch
+from dataclasses import dataclass
+
 import numpy as np
+import torch
+from torch import nn
 
 from .synaptogen import CellArrayCPU, applyVoltage
 from .quant_modules import LinearQuant, ActivationQuantizer
@@ -38,6 +40,13 @@ class MemristorArray(nn.Module):
             low_degree: int = 7,
             high_degree: int = 6,
     ):
+        """
+
+        :param in_features: input lines of the memristor (I)
+        :param out_features: output lines of the memristor (O)
+        :param low_degree:
+        :param high_degree:
+        """
         super().__init__()
 
         # the resistance state can be applied to both polynomials beforehand
@@ -49,14 +58,15 @@ class MemristorArray(nn.Module):
         self.low_degree = low_degree
         self.high_degree = high_degree
 
-        self.BW = 1e-8  # What is this?
-        self.kBT = 1.380649e-23 * 300  # what is this?
+        self.BW = 1e-8  # Default Constant
+        self.kBT = 1.380649e-23 * 300  # Default Constant
+        self.noise_minimum_voltage = 1e-12
         self.e = np.exp(1)
 
         self.in_features = in_features
         self.out_features = out_features
 
-    def init_from_cell_array_output_major(self, cells: CellArrayCPU):
+    def init_resistance_states(self, cells: CellArrayCPU):
         LLRS = torch.Tensor(cells.params.LLRS)
         # internal computations are easier if we start from lowest polynomial first, so flip
         LLRS = torch.flip(LLRS, dims=[0])
@@ -66,106 +76,77 @@ class MemristorArray(nn.Module):
         HHRS = torch.flip(HHRS, dims=[0])
         self.resistance_weighted_poly_high.data = HHRS
 
+    def init_from_cell_array_input_major(self, cells: CellArrayCPU):
+        self.init_resistance_states(cells)
         self.r.data = torch.Tensor(cells.r).resize(self.in_features, self.out_features)
 
-    def forward(self, inputs: torch.Tensor):
+    def compute_raw_output(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        :param inputs: [..., I]
+        :return [..., I, O]
+        """
         result_low = poly_mul(degree=self.low_degree, polynomials=self.resistance_weighted_poly_low, inputs=inputs)
         result_high = poly_mul(degree=self.high_degree, polynomials=self.resistance_weighted_poly_high,
                                   inputs=inputs)
         result_raw = (1 - self.r) * result_low + self.r * result_high  # [....., I, O]
+        return result_raw
 
-        johnson_noise = 4 * self.kBT * self.BW * torch.abs(result_raw / inputs.unsqueeze(-1))
+    def compute_noise(self, result_raw: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+        """
+
+        :param result_raw: [..., I, O]
+        :param inputs: [..., I]
+        :return:
+        """
+        johnson_noise = 4 * self.kBT * self.BW * torch.abs(
+            result_raw / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage))
         shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
-        sigma_total = torch.sqrt(johnson_noise + shot_noise) * 0.0
-        noise = torch.randn(result_raw.shape)
-        result_noised = result_raw + noise * sigma_total
-        return torch.sum(result_noised, dim=-2)
+        sigma_total = torch.sqrt(johnson_noise + shot_noise)
+        noise = torch.randn(result_raw.shape, device=inputs.device)
+        return noise * sigma_total
+
+    def forward(self, inputs: torch.Tensor):
+        result_raw = self.compute_raw_output(inputs)
+
+        noise = self.compute_noise(result_raw, inputs)
+        result_noised = result_raw + noise
+
+        return torch.sum(result_noised, dim=-2)  # [..., I, O] -> sum reduce I -> [..., O]
     
-class PairedMemristorArrayV2(nn.Module):
+class PairedMemristorArrayV2(MemristorArray):
     """
     TorchModule for a Memristor array with pairwise subtracted bitlines
     """
 
-    def __init__(
-            self,
-            in_features: int,
-            out_features: int,
-            low_degree: int = 7,
-            high_degree: int = 6,
-    ):
-        super().__init__()
+    def init_from_cell_array_input_major(self, cells: CellArrayCPU):
+        raise NotImplementedError
 
-        # the resistance state can be applied to both polynomials beforehand
-        self.resistance_weighted_poly_low = nn.Parameter(torch.empty((low_degree,)),
-                                                         requires_grad=False)
-        self.resistance_weighted_poly_high = nn.Parameter(torch.empty((high_degree,)),
-                                                          requires_grad=False)
-        self.r = nn.Parameter(torch.empty((in_features, out_features*2)), requires_grad=False)
-        self.low_degree = low_degree
-        self.high_degree = high_degree
+    def init_from_paired_cell_array_input_major(self, positive_cells: CellArrayCPU, negative_cells: CellArrayCPU):
+        self.init_resistance_states(positive_cells)
 
-        self.BW = 1e-8  # What is this?
-        self.kBT = 1.380649e-23 * 300  # what is this?
-        self.e = np.exp(1)
-
-        self.in_features = in_features
-        self.out_features = out_features
-
-    def init_from_cell_array_input_major(self, positive_cells: CellArrayCPU, negative_cells: CellArrayCPU):
-        assert all(positive_cells.params.LLRS == negative_cells.params.LLRS)
-        LLRS = torch.Tensor(positive_cells.params.LLRS)
-        # internal computations are easier if we start from lowest polynomial first, so flip
-        LLRS = torch.flip(LLRS, dims=[0])
-        # extend to [P, O, I]
-        #LLRS = torch.reshape(LLRS, shape=[LLRS.shape[0], 1, 1])  # [P, 1, 1]
-        #LLRS = torch.expand_copy(LLRS, size=(LLRS.shape[0], 1, self.in_features))  # [P, 1, I]
-        # assign to weight
-        self.resistance_weighted_poly_low.data = LLRS
-        HHRS = torch.Tensor(positive_cells.params.HHRS)
-        HHRS = torch.flip(HHRS, dims=[0])
-        #HHRS = torch.reshape(HHRS, shape=[HHRS.shape[0], 1, 1])
-        #HHRS = torch.expand_copy(HHRS, size=(HHRS.shape[0], 1, self.in_features))
-        self.resistance_weighted_poly_high.data = HHRS
         positive_r = torch.Tensor(positive_cells.r).resize(self.in_features, self.out_features)
         negative_r = torch.Tensor(negative_cells.r).resize(self.in_features, self.out_features)
         self.r.data = torch.concat([positive_r, negative_r], dim=-1)  # [I, 2 * O]
 
     def forward(self, inputs: torch.Tensor):
-        # Apply the polynomials to the inputs
-        result_low = poly_mul(degree=self.low_degree, polynomials=self.resistance_weighted_poly_low, inputs=inputs)
-        result_high = poly_mul(degree=self.high_degree, polynomials=self.resistance_weighted_poly_high,
-                                  inputs=inputs)
-
-        # broadcast result to output layer
-        result_low = torch.expand_copy(result_low, inputs.shape + (self.out_features*2,))
-        result_high = torch.expand_copy(result_high, inputs.shape + (self.out_features*2,))
-
-        # linear interpolation of low and high state with the resistance factors of shape [I, O]
-        result_raw = (1 - self.r) * result_low + self.r * result_high  # [....., I, O]
+        result_raw = self.compute_raw_output(inputs)
 
         # compute gaussian noises
-        johnson_noise = 4 * self.kBT * self.BW * torch.abs(result_raw / (torch.abs(inputs.unsqueeze(-1)) + 1e-12))
-        shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
-        sigma_total = torch.sqrt(johnson_noise + shot_noise)
-        noise = torch.randn(result_raw.shape, device=inputs.device)
+        noise = self.compute_noise(result_raw, inputs)
 
         # Apply noise
-        result_noised = result_raw + noise * sigma_total
-        # result_noised = result_raw
+        result_noised = result_raw + noise
 
         # Sum the output lines
         line_summed = torch.sum(result_noised, dim=-2) # [...., 2*O]
-        shape = line_summed.shape
 
         # Perform the subtraction of positive and negative lines
+        shape = line_summed.shape
         axis_extended = torch.reshape(line_summed, shape[:-1] + (2, -1))  # [...., 2, O]
         intermediate = torch.moveaxis(axis_extended, -2, 0)  # [2, ...., O]
         result_noised_paired = intermediate[0] - intermediate[1]  # [...., O]
 
         return result_noised_paired
-
-
-from dataclasses import dataclass
 
 @dataclass
 class DacAdcHardwareSettings:
@@ -229,13 +210,20 @@ class DacAdcPair(nn.Module):
 
 class MemristorLinear(nn.Module):
 
-    def __init__(self, in_features: int, out_features: int, weight_precision: int):
+    def __init__(
+            self,
+            in_features: int,
+            out_features: int,
+            weight_precision: int,
+            converter_hardware_settings: DacAdcHardwareSettings
+    ):
         super().__init__()
         self.memristors = torch.nn.ModuleList(
                [
-                PairedMemristorArray(in_features, out_features) for _ in range(weight_precision)
+                PairedMemristorArrayV2(in_features, out_features) for _ in range(weight_precision - 1)
             ]
         )
+        self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
 
     def init_from_linear_quant(self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant):
         quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
@@ -256,7 +244,7 @@ class MemristorLinear(nn.Module):
 
 
 
-def linear_quant_to_mem(linear_quant: LinearQuant, use_v2=False):
+def linear_quant_to_mem(linear_quant: LinearQuant):
     quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
     quant_weights_scaled = torch.torch.round(quant_weights / linear_quant.weight_fake_quant.scale).to(dtype=torch.int32)
     quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled, 0, 1)  # [out, in] -> [in, out]
@@ -270,7 +258,7 @@ def linear_quant_to_mem(linear_quant: LinearQuant, use_v2=False):
     applyVoltage(negative_cells, negative_weights * -2.0)
 
     pma = PairedMemristorArrayV2(in_features=linear_quant.in_features, out_features=linear_quant.out_features)
-    pma.init_from_cell_array_input_major(positive_cells, negative_cells)
+    pma.init_from_paired_cell_array_input_major(positive_cells, negative_cells)
 
     hardware_settings = DacAdcHardwareSettings(
         input_bits=8,
@@ -300,7 +288,7 @@ def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: Ac
     print(negative_cells.r[:20])
 
     pma = PairedMemristorArrayV2(in_features=linear_quant.in_features, out_features=linear_quant.out_features)
-    pma.init_from_cell_array_input_major(positive_cells, negative_cells)
+    pma.init_from_paired_cell_array_input_major(positive_cells, negative_cells)
 
     scale = activation_quant.scale
     print("scale")
@@ -360,7 +348,7 @@ def test_toy_memristor():
     print(negative_cells.r[:20])
 
     pma = PairedMemristorArrayV2(in_features=2, out_features=3)
-    pma.init_from_cell_array_input_major(positive_cells, negative_cells)
+    pma.init_from_paired_cell_array_input_major(positive_cells, negative_cells)
 
     hardware_settings = DacAdcHardwareSettings(
         input_bits=8,
@@ -391,6 +379,56 @@ def test_polymul():
     result = poly_mul(3, poly_weight, inp)
     print(result[0][0])
 
+
+def compute_correction_factor():
+
+    from .synaptogen import CellArrayCPU, applyVoltage, Iread
+
+    correction_factors_paired = []
+    correction_factors_single = []
+    
+    for i in range(1000):
+        estimation_cells = CellArrayCPU(200)
+
+        zero_offsets = []
+        zero_offsets_nc = []
+        for check in np.arange(0.001, 0.7, 0.1):
+            out = Iread(estimation_cells, check)
+            zero_offset = np.mean(out)
+            zero_offsets_nc.append(zero_offset)
+            zero_offsets.append(0)
+            #print(f"check value: {check:.2} gives zero_offset {zero_offset}")
+
+        zero_offset_nc = np.mean(zero_offsets_nc)
+
+        # applyVoltage(estimation_cells, -2.5)
+        applyVoltage(estimation_cells, np.asarray([-2.5] * 100 + [0.0] * 100))
+        correction_factors = []
+        correction_factors_nc = []
+        for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
+            cell_out = Iread(estimation_cells, check)
+            out = (cell_out[:100] - cell_out[100:])
+            out_nc = (cell_out[:100])
+            correction_factor = check / np.mean(out - zero_offsets[i])
+            correction_factor_nc = check / np.mean(out_nc - zero_offsets_nc[i])
+            correction_factors.append(correction_factor)
+            correction_factors_nc.append(correction_factor_nc)
+            #print(f"check value: {check:.2} gives correction factor {correction_factor}")
+
+        applyVoltage(estimation_cells, 2.5)
+        for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
+            out = Iread(estimation_cells, check)
+            #print(f"check value: {check:.2} gives min raw value: {np.min(out)}")
+
+        correction_factor_paired = np.mean(correction_factors) / 0.6
+        correction_factor_single = np.mean(correction_factors_nc) / 0.6
+
+        correction_factors_paired.append(correction_factor_paired)
+        correction_factors_single.append(correction_factor_single)
+    
+    print(f"correction factor paired: {np.mean(correction_factors_paired)}")
+    print(f"correction factor single: {np.mean(correction_factors_single)}")
+        
 
 
 def memristor_tests():
@@ -610,5 +648,6 @@ def memristor_tests():
     # try to set weight to 0.5
 
 if __name__ == "__main__":
-    test_toy_memristor()
-    memristor_tests()
+    #test_toy_memristor()
+    #memristor_tests()
+    compute_correction_factor()
