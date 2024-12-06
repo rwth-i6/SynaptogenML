@@ -15,22 +15,24 @@ from torch.nn.quantized._reference.modules import Linear
 from torch.nn.quantized._reference.modules import Conv1d
 
 def get_quantization_range_from_bit_precision(bits, dtype):
+    """
+    This is a modified version for memristors where quant_min is 1 smaller to have a range symmetric to 0
 
+    :param bits: bit precision level
+    :param dtype: quantization type (use qint8 for symmetric)
+    :return:
+    """
     if dtype == torch.qint8:
         quant_min = -(2**(bits-1))+1
         quant_max = (2**(bits-1))-1
-
     elif dtype == torch.quint8:
         quant_min = 0
         quant_max = (2**bits)-1
-
     else:
         raise ValueError(f'Unrecognized dtype {dtype}')
 
     return torch.tensor(quant_min, dtype=torch.int32), torch.tensor(quant_max, dtype=torch.int32)
 
-
-# TODO: these wrappers seem to be generating a lot of overhead, but i like keeping them for a bit
 
 class WeightQuantizer(nn.Module):
     def __init__(self, bit_precision: int, dtype: torch.dtype, method: str, reduce_range: bool = False):
@@ -84,13 +86,7 @@ class WeightQuantizer(nn.Module):
         scale, zero_point = self.observer.calculate_qparams()
         self.scale = scale.to(dtype=torch.float32)
         self.zero_point = zero_point.to(dtype=torch.int32)
-    #
-    # def calculate_qparams(self):
-    #     return self.observer.calculate_qparams()
-    #
-    # @property
-    # def qscheme(self):
-    #     return self.observer.qscheme
+
 
 class ActivationQuantizer(nn.Module):
 
@@ -196,9 +192,6 @@ class ActivationQuantizer(nn.Module):
         scale, zero_point = self.observer.calculate_qparams()
         self.scale = scale.to(dtype=torch.float32)
         self.zero_point = zero_point.to(dtype=torch.int32)
-
-    # def calculate_qparams(self):
-    #     return self.observer.calculate_qparams()
 
 
 class LinearQuant(nn.Module):
