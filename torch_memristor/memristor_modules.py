@@ -218,35 +218,68 @@ class MemristorLinear(nn.Module):
             converter_hardware_settings: DacAdcHardwareSettings
     ):
         super().__init__()
+        self.weight_precision = weight_precision
         self.memristors = torch.nn.ModuleList(
                [
                 PairedMemristorArrayV2(in_features, out_features) for _ in range(weight_precision - 1)
             ]
         )
         self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
+        self.input_factor = 1.0
+        self.output_factor = 1.0
+
+        self.initialized = False
 
     def init_from_linear_quant(self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant):
-        quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
-        quant_weights_scaled = torch.torch.round(quant_weights / linear_quant.weight_fake_quant.scale).to(dtype=torch.int32)
-        quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled, 0, 1)  # [out, in] -> [in, out]
-        flat = torch.flatten(quant_weights_scaled_transposed)
-        positive_weights = torch.clamp(flat, 0, 1).numpy()
-        negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
-        size = flat.shape[0]
-        positive_cells = CellArrayCPU(size)
-        negative_cells = CellArrayCPU(size)
-        applyVoltage(positive_cells, positive_weights*-2.0)
-        applyVoltage(negative_cells, negative_weights*-2.0)
-        print(flat)[:20]
-        print(positive_cells.r[:20])
-        print(negative_cells.r[:20])
-        
+        quant_weights = linear_quant.weight_fake_quant(linear_quant.weight).detach()
+        # handle weight sign separately because integer division with negative numbers does not work as expected
+        # for this case here, e.g. -5 // 2 = -3 instead of -2
+        weights_sign = torch.sign(quant_weights)
+        quant_weights_scaled_abs = torch.round(
+            torch.absolute(quant_weights / linear_quant.weight_fake_quant.scale)).to(dtype=torch.int32)
 
+        for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
+            # the weights we want to apply
+            quant_weights_scaled_bit = quant_weights_scaled_abs // (2**bit)
 
+            # the residual weights for the next step
+            quant_weights_scaled_abs = quant_weights_scaled_abs % (2**bit)
+
+            # re-apply sign and transpose
+            quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled_bit * weights_sign, 0, 1)  # [out, in] -> [in, out]
+
+            # Arrays need flat input
+            flat = torch.flatten(quant_weights_scaled_transposed).cpu()
+
+            # positive numbers go in the positive line array, negative numbers as positive weight in the negative array
+            positive_weights = torch.clamp(flat, 0, 1).numpy()
+            negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
+
+            # apply negative voltage where a weight is set
+            size = flat.shape[0]
+            positive_cells = CellArrayCPU(size)
+            negative_cells = CellArrayCPU(size)
+            applyVoltage(positive_cells, positive_weights * -2.0)
+            applyVoltage(negative_cells, negative_weights * -2.0)
+
+            self.memristors[i].init_from_paired_cell_array_input_major(positive_cells, negative_cells)
+
+        self.input_factor = 1.0/(activation_quant.scale * activation_quant.quant_max)
+        self.output_factor = linear_quant.weight_fake_quant.scale * activation_quant.scale * activation_quant.quant_max
+        self.initialized = True
+
+    def forward(self, inputs: torch.Tensor):
+        assert self.initialized
+        inp = self.converter.dac(inputs * self.input_factor)
+        mem_out = self.converter.adc(self.memristors[-1].forward(inp))
+        for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
+            mem_out += self.converter.adc(self.memristors[i].forward(inp)) * (2**bit)
+        out = mem_out * self.output_factor
+        return out
 
 def linear_quant_to_mem(linear_quant: LinearQuant):
     quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
-    quant_weights_scaled = torch.torch.round(quant_weights / linear_quant.weight_fake_quant.scale).to(dtype=torch.int32)
+    quant_weights_scaled = torch.floor(quant_weights / linear_quant.weight_fake_quant.scale).to(dtype=torch.int32)
     quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled, 0, 1)  # [out, in] -> [in, out]
     flat = torch.flatten(quant_weights_scaled_transposed).cpu()
     positive_weights = torch.clamp(flat, 0, 1).numpy()
