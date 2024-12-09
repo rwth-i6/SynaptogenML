@@ -346,6 +346,7 @@ class QuantizedMultiheadAttention(nn.Module):
         self.dot_quant_method = cfg.dot_quant_method
         self.Av_quant_dtype = cfg.Av_quant_dtype
         self.Av_quant_method = cfg.Av_quant_method
+        self.converter_hardware_settings = cfg.converter_hardware_settings
 
         self.out_proj = self._create_linear_layer(
             weight_bits=cfg.bit_prec_W_o,
