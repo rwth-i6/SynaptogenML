@@ -18,7 +18,9 @@ def poly_mul(degree: int, polynomials: torch.Tensor, inputs: torch.Tensor):
     :return: [...., I, 1] outputs with additional broadcast axis
     """
     # initialize output with the polynomial constant and already broadcast to the desired return shape
-    broadcast_output = torch.broadcast_to(polynomials[0], size=inputs.shape + (1,))  # [..., I, 1]
+    broadcast_output = torch.broadcast_to(
+        polynomials[0], size=inputs.shape + (1,)
+    )  # [..., I, 1]
     # broadcast inputs to the desired output shape
     inputs = inputs.unsqueeze(-1)  # [..., I, 1]
     for i in range(degree - 1):
@@ -34,11 +36,11 @@ class MemristorArray(nn.Module):
     """
 
     def __init__(
-            self,
-            in_features: int,
-            out_features: int,
-            low_degree: int = 7,
-            high_degree: int = 6,
+        self,
+        in_features: int,
+        out_features: int,
+        low_degree: int = 7,
+        high_degree: int = 6,
     ):
         """
 
@@ -50,11 +52,15 @@ class MemristorArray(nn.Module):
         super().__init__()
 
         # the resistance state can be applied to both polynomials beforehand
-        self.resistance_weighted_poly_low = nn.Parameter(torch.empty((low_degree,)),
-                                                         requires_grad=False)
-        self.resistance_weighted_poly_high = nn.Parameter(torch.empty((high_degree,)),
-                                                          requires_grad=False)
-        self.r = nn.Parameter(torch.empty((out_features, in_features)), requires_grad=False)
+        self.resistance_weighted_poly_low = nn.Parameter(
+            torch.empty((low_degree,)), requires_grad=False
+        )
+        self.resistance_weighted_poly_high = nn.Parameter(
+            torch.empty((high_degree,)), requires_grad=False
+        )
+        self.r = nn.Parameter(
+            torch.empty((out_features, in_features)), requires_grad=False
+        )
         self.low_degree = low_degree
         self.high_degree = high_degree
 
@@ -85,21 +91,37 @@ class MemristorArray(nn.Module):
         :param inputs: [..., I]
         :return [..., I, O]
         """
-        result_low = poly_mul(degree=self.low_degree, polynomials=self.resistance_weighted_poly_low, inputs=inputs)
-        result_high = poly_mul(degree=self.high_degree, polynomials=self.resistance_weighted_poly_high,
-                                  inputs=inputs)
+        result_low = poly_mul(
+            degree=self.low_degree,
+            polynomials=self.resistance_weighted_poly_low,
+            inputs=inputs,
+        )
+        result_high = poly_mul(
+            degree=self.high_degree,
+            polynomials=self.resistance_weighted_poly_high,
+            inputs=inputs,
+        )
         result_raw = (1 - self.r) * result_low + self.r * result_high  # [....., I, O]
         return result_raw
 
-    def compute_noise(self, result_raw: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+    def compute_noise(
+        self, result_raw: torch.Tensor, inputs: torch.Tensor
+    ) -> torch.Tensor:
         """
 
         :param result_raw: [..., I, O]
         :param inputs: [..., I]
         :return:
         """
-        johnson_noise = 4 * self.kBT * self.BW * torch.abs(
-            result_raw / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage))
+        johnson_noise = (
+            4
+            * self.kBT
+            * self.BW
+            * torch.abs(
+                result_raw
+                / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage)
+            )
+        )
         shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
         sigma_total = torch.sqrt(johnson_noise + shot_noise)
         noise = torch.randn(result_raw.shape, device=inputs.device)
@@ -111,8 +133,11 @@ class MemristorArray(nn.Module):
         noise = self.compute_noise(result_raw, inputs)
         result_noised = result_raw + noise
 
-        return torch.sum(result_noised, dim=-2)  # [..., I, O] -> sum reduce I -> [..., O]
-    
+        return torch.sum(
+            result_noised, dim=-2
+        )  # [..., I, O] -> sum reduce I -> [..., O]
+
+
 class PairedMemristorArrayV2(MemristorArray):
     """
     TorchModule for a Memristor array with pairwise subtracted bitlines
@@ -121,11 +146,17 @@ class PairedMemristorArrayV2(MemristorArray):
     def init_from_cell_array_input_major(self, cells: CellArrayCPU):
         raise NotImplementedError
 
-    def init_from_paired_cell_array_input_major(self, positive_cells: CellArrayCPU, negative_cells: CellArrayCPU):
+    def init_from_paired_cell_array_input_major(
+        self, positive_cells: CellArrayCPU, negative_cells: CellArrayCPU
+    ):
         self.init_resistance_states(positive_cells)
 
-        positive_r = torch.Tensor(positive_cells.r).resize(self.in_features, self.out_features)
-        negative_r = torch.Tensor(negative_cells.r).resize(self.in_features, self.out_features)
+        positive_r = torch.Tensor(positive_cells.r).resize(
+            self.in_features, self.out_features
+        )
+        negative_r = torch.Tensor(negative_cells.r).resize(
+            self.in_features, self.out_features
+        )
         self.r.data = torch.concat([positive_r, negative_r], dim=-1)  # [I, 2 * O]
 
     def forward(self, inputs: torch.Tensor):
@@ -138,7 +169,7 @@ class PairedMemristorArrayV2(MemristorArray):
         result_noised = result_raw + noise
 
         # Sum the output lines
-        line_summed = torch.sum(result_noised, dim=-2) # [...., 2*O]
+        line_summed = torch.sum(result_noised, dim=-2)  # [...., 2*O]
 
         # Perform the subtraction of positive and negative lines
         shape = line_summed.shape
@@ -147,6 +178,7 @@ class PairedMemristorArrayV2(MemristorArray):
         result_noised_paired = intermediate[0] - intermediate[1]  # [...., O]
 
         return result_noised_paired
+
 
 @dataclass
 class DacAdcHardwareSettings:
@@ -157,21 +189,20 @@ class DacAdcHardwareSettings:
     hardware_output_current_scaling: float
 
     def __post_init__(self):
-        self.dac_input_quant_scaling_factor = 1 / 2**(self.input_bits-1)
-        self.dac_max = 2**(self.input_bits - 1)
+        self.dac_input_quant_scaling_factor = 1 / 2 ** (self.input_bits - 1)
+        self.dac_max = 2 ** (self.input_bits - 1)
         self.dac_min = -self.dac_max
-        self.adc_max = 2**(self.output_precision_bits + self.output_range_bits - 1)
+        self.adc_max = 2 ** (self.output_precision_bits + self.output_range_bits - 1)
         self.adc_min = -self.adc_max
+
 
 class DacAdcPair(nn.Module):
     """
     Simple variant of an DAC and ADC Module,
     computationally related to "input quantizer" and "output quantizer"
     """
-    def __init__(
-        self,
-        hardware_settings: DacAdcHardwareSettings
-    ):
+
+    def __init__(self, hardware_settings: DacAdcHardwareSettings):
         super().__init__()
         """
         :param hardware_settings: Should usually be the same for the whole setup / every instance
@@ -184,7 +215,7 @@ class DacAdcPair(nn.Module):
             scale=self.hs.dac_input_quant_scaling_factor,
             zero_point=0,
             quant_min=self.hs.dac_min,
-            quant_max=self.hs.dac_max
+            quant_max=self.hs.dac_max,
         )
         # TODO: DAC Noise
         # * self.HARDWARE_VMAX -> convert to physical voltage
@@ -194,13 +225,13 @@ class DacAdcPair(nn.Module):
     def adc(self, tensor: torch.Tensor):
         # go from physical current to internal value space again
         adc_in = tensor * self.hs.hardware_output_current_scaling
-        #print("adc_in")
-        #print(torch.max(adc_in))
+        # print("adc_in")
+        # print(torch.max(adc_in))
         # the precision should quantize [-1,1], while everything larger should be covered by output bits,
         # so for 5 output bits we are quantizing a range of [-32, 32]
         quantized_output = torch.fake_quantize_per_tensor_affine(
             adc_in,
-            scale=1/(2**self.hs.output_precision_bits),
+            scale=1 / (2**self.hs.output_precision_bits),
             zero_point=0,
             quant_min=self.hs.adc_min,
             quant_max=self.hs.adc_max,
@@ -209,19 +240,19 @@ class DacAdcPair(nn.Module):
 
 
 class MemristorLinear(nn.Module):
-
     def __init__(
-            self,
-            in_features: int,
-            out_features: int,
-            weight_precision: int,
-            converter_hardware_settings: DacAdcHardwareSettings
+        self,
+        in_features: int,
+        out_features: int,
+        weight_precision: int,
+        converter_hardware_settings: DacAdcHardwareSettings,
     ):
         super().__init__()
         self.weight_precision = weight_precision
         self.memristors = torch.nn.ModuleList(
-               [
-                PairedMemristorArrayV2(in_features, out_features) for _ in range(weight_precision - 1)
+            [
+                PairedMemristorArrayV2(in_features, out_features)
+                for _ in range(weight_precision - 1)
             ]
         )
         self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
@@ -230,13 +261,16 @@ class MemristorLinear(nn.Module):
 
         self.initialized = False
 
-    def init_from_linear_quant(self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant):
-        quant_weights = linear_quant.weight_fake_quant(linear_quant.weight).detach()
+    def init_from_linear_quant(
+        self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant
+    ):
+        quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
         # handle weight sign separately because integer division with negative numbers does not work as expected
         # for this case here, e.g. -5 // 2 = -3 instead of -2
         weights_sign = torch.sign(quant_weights)
         quant_weights_scaled_abs = torch.round(
-            torch.absolute(quant_weights / linear_quant.weight_fake_quant.scale)).to(dtype=torch.int32)
+            torch.absolute(quant_weights / linear_quant.weight_quantizer.scale)
+        ).to(dtype=torch.int32)
 
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
             # the weights we want to apply
@@ -246,7 +280,9 @@ class MemristorLinear(nn.Module):
             quant_weights_scaled_abs = quant_weights_scaled_abs % (2**bit)
 
             # re-apply sign and transpose
-            quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled_bit * weights_sign, 0, 1)  # [out, in] -> [in, out]
+            quant_weights_scaled_transposed = torch.transpose(
+                quant_weights_scaled_bit * weights_sign, 0, 1
+            )  # [out, in] -> [in, out]
 
             # Arrays need flat input
             flat = torch.flatten(quant_weights_scaled_transposed).cpu()
@@ -262,10 +298,16 @@ class MemristorLinear(nn.Module):
             applyVoltage(positive_cells, positive_weights * -2.0)
             applyVoltage(negative_cells, negative_weights * -2.0)
 
-            self.memristors[i].init_from_paired_cell_array_input_major(positive_cells, negative_cells)
+            self.memristors[i].init_from_paired_cell_array_input_major(
+                positive_cells, negative_cells
+            )
 
-        self.input_factor = 1.0/(activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = linear_quant.weight_fake_quant.scale * activation_quant.scale * activation_quant.quant_max
+        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
+        self.output_factor = (
+            linear_quant.weight_quantizer.scale
+            * activation_quant.scale
+            * activation_quant.quant_max
+        )
         self.initialized = True
 
     def forward(self, inputs: torch.Tensor):
@@ -278,14 +320,13 @@ class MemristorLinear(nn.Module):
         return out
 
 
-
 def compute_correction_factor():
 
     from .synaptogen import CellArrayCPU, applyVoltage, Iread
 
     correction_factors_paired = []
     correction_factors_single = []
-    
+
     for i in range(1000):
         estimation_cells = CellArrayCPU(200)
 
@@ -296,7 +337,7 @@ def compute_correction_factor():
             zero_offset = np.mean(out)
             zero_offsets_nc.append(zero_offset)
             zero_offsets.append(0)
-            #print(f"check value: {check:.2} gives zero_offset {zero_offset}")
+            # print(f"check value: {check:.2} gives zero_offset {zero_offset}")
 
         zero_offset_nc = np.mean(zero_offsets_nc)
 
@@ -306,24 +347,24 @@ def compute_correction_factor():
         correction_factors_nc = []
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
             cell_out = Iread(estimation_cells, check)
-            out = (cell_out[:100] - cell_out[100:])
-            out_nc = (cell_out[:100])
+            out = cell_out[:100] - cell_out[100:]
+            out_nc = cell_out[:100]
             correction_factor = check / np.mean(out - zero_offsets[i])
             correction_factor_nc = check / np.mean(out_nc - zero_offsets_nc[i])
             correction_factors.append(correction_factor)
             correction_factors_nc.append(correction_factor_nc)
-            #print(f"check value: {check:.2} gives correction factor {correction_factor}")
+            # print(f"check value: {check:.2} gives correction factor {correction_factor}")
 
         applyVoltage(estimation_cells, 2.5)
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
             out = Iread(estimation_cells, check)
-            #print(f"check value: {check:.2} gives min raw value: {np.min(out)}")
+            # print(f"check value: {check:.2} gives min raw value: {np.min(out)}")
 
         correction_factor_paired = np.mean(correction_factors) / 0.6
         correction_factor_single = np.mean(correction_factors_nc) / 0.6
 
         correction_factors_paired.append(correction_factor_paired)
         correction_factors_single.append(correction_factor_single)
-    
+
     print(f"correction factor paired: {np.mean(correction_factors_paired)}")
     print(f"correction factor single: {np.mean(correction_factors_single)}")
