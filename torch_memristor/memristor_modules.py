@@ -23,10 +23,12 @@ def poly_mul(degree: int, polynomials: torch.Tensor, inputs: torch.Tensor):
     )  # [..., I, 1]
     # broadcast inputs to the desired output shape
     inputs = inputs.unsqueeze(-1)  # [..., I, 1]
+    results = []
     for i in range(degree - 1):
         coefficient = polynomials[i + 1]  # [1]
         result = torch.mul(inputs ** (i + 1), coefficient)  # [...., I, 1]
-        broadcast_output = result + broadcast_output  # [...., I, 1]
+        results.append(result)
+    broadcast_output = torch.stack(results, dim=0).sum(dim=0)  # [...., I, 1]
     return broadcast_output
 
 
