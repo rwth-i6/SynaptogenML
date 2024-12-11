@@ -240,6 +240,8 @@ class LinearQuant(nn.Module):
         )
         if bias:
             self.bias = nn.Parameter(torch.empty((out_features,)), requires_grad=True)
+        else:
+            self.bias = None
 
         init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         if self.bias is not None:
