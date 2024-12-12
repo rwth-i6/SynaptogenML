@@ -171,6 +171,19 @@ class CellArray :
             gamma_out = gamma_out * x + gamma_in_v[:, np.newaxis]  # for broadcasting to work..
         return gamma_out
 
+    def var_sample(self):
+        """
+        Draw the next VAR terms, updating the history matrix (c.Xhat)
+        involves a shift operation for the subset of columns corresponding to drawVARMask == true
+        """
+        nfeatures = self.params.nfeatures
+        VAR = self.params.VAR
+        mask = self.drawVARMask
+        randn((nfeatures, self.M), out=self.Xhat[:nfeatures, :])
+        x = VAR @ self.Xhat
+        self.Xhat[nfeatures:-nfeatures, mask] = self.Xhat[2 * nfeatures:, mask]
+        self.Xhat[-nfeatures:, mask] = x[:, mask]
+
     def applyVoltage(self, Ua):
         """
         Apply voltages from array U to the corresponding cell in the CellArray
@@ -202,7 +215,7 @@ class CellArray :
             self.UR[self.setMask] = UR(c)[self.setMask]
 
         if any(self.drawVARMask):
-            VAR_sample(c)
+            self.var_sample()
             self.n += self.drawVARMask
             self.y = psi(self.mu, self.sigma, gamma_f(gamma, self.Xhat[-nfeatures:, :]))
 
@@ -274,19 +287,6 @@ def US(c:CellArray):
 
 def UR(c:CellArray):
     return c.y[iUR]
-
-def VAR_sample(c:CellArray):
-    """
-    Draw the next VAR terms, updating the history matrix (c.Xhat)
-    involves a shift operation for the subset of columns corresponding to drawVARMask == true
-    """
-    nfeatures = c.params.nfeatures
-    VAR = c.params.VAR
-    mask = c.drawVARMask
-    randn((nfeatures, c.M), out=c.Xhat[:nfeatures, :])
-    x = VAR @ c.Xhat
-    c.Xhat[nfeatures:-nfeatures, mask] = c.Xhat[2*nfeatures:, mask]
-    c.Xhat[-nfeatures:, mask] = x[:, mask]
 
 def Imix(r, U, HHRS, LLRS):
     return (1 - r) * polyval(LLRS, U) + r * polyval(HHRS, U)
