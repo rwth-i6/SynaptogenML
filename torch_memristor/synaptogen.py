@@ -175,16 +175,16 @@ def load_params(param_fp:str=default_param_fp, p:int=10):
     with open(param_fp, 'r', encoding='UTF-8') as f:
         json_params = json.load(f)
 
-    γ = array32(json_params['γ'])
-    nfeatures, γdeg = γ.shape
+    gamma = array32(json_params['gamma'])
+    nfeatures, gamma_deg = gamma.shape
 
     VAR_keys = [k for k in json_params.keys() if k.startswith('VAR')]
     available_orders = np.sort([int(k.split('_')[-1]) for k in VAR_keys])
     q = available_orders[np.where(available_orders >= p)[0][0]]
     VAR = array32(json_params[f'VAR_{q:>03}'])[:, :(p+1)*nfeatures]
     Umax = float32(json_params['Umax'])
-    U0 = float32(json_params['U₀'])
-    η = float32(json_params['η'])
+    U0 = float32(json_params['U_0'])
+    eta = float32(json_params['eta'])
     HHRS = array32(json_params['HHRS'])
     LLRS = array32(json_params['LLRS'])
     G_HHRS = polyval(HHRS, U0)/U0
@@ -194,10 +194,10 @@ def load_params(param_fp:str=default_param_fp, p:int=10):
     wk = array32(json_params['wk'])
     K = wk.shape[0]
     LDtD = np.moveaxis(array32(json_params['LDtD']).reshape(2*nfeatures, K, 2*nfeatures), 1, 2)
-    μDtD = array32(json_params['μDtD'])
+    μDtD = array32(json_params['mu_DtD'])
 
-    return CellParams(Umax, U0, η, nfeatures, p, K, γdeg, G_HHRS, G_LLRS, HHRSdeg, LLRSdeg,
-                      HHRS, LLRS, γ, wk, μDtD, LDtD, VAR)
+    return CellParams(Umax, U0, eta, nfeatures, p, K, gamma_deg, G_HHRS, G_LLRS, HHRSdeg, LLRSdeg,
+                      HHRS, LLRS, gamma, wk, μDtD, LDtD, VAR)
 
 default_params = load_params(default_param_fp)
 
