@@ -57,15 +57,15 @@ def Ireset(a, c, U, eta, Umax):
 
 
 @dataclass
-class CellParams : 
-    Umax : float           # Maximum voltage applied during the experiment.  defines the point where HRS is reached.
+class CellParams:
+    Umax: float           # Maximum voltage applied during the experiment.  defines the point where HRS is reached.
     U0 : float             # Voltage used in the definition of resistance R = U₀ / I(U₀)
     eta : float              # Sets the curvature of the reset transition
     nfeatures : int        # Number of features for the VAR model
     p : int                # Order of the VAR model (how many cycles of history remembered)
     K : int                # How many components in the GMM for modeling device-to-device distribution
-    gammadeg : int             # Degree of the non-linear transformation polynomials
-    G_HHRS : float         # Conductance of the HHRS 
+    gamma_deg : int             # Degree of the non-linear transformation polynomials
+    G_HHRS : float         # Conductance of the HHRS
     G_LLRS : float         # Conductance of the LLRS
     HHRSdeg : int          # Degree of the HHRS polynomial
     LLRSdeg : int          # Degree of the LLRS polynomial
@@ -73,13 +73,12 @@ class CellParams :
     LLRS : np.ndarray      # LLRS coefficients
     gamma : np.ndarray         # non-linear transformation coefficients
     wk : np.ndarray        # weights of the GMM components
-    muDtD : np.ndarray      # mean vectors for the GMM
+    mu_DtD : np.ndarray      # mean vectors for the GMM
     LDtD : np.ndarray      # Cholesky decomposition of covariance matrices for the GMM (lower triangular)
     VAR : np.ndarray       # VAR coefficients, including A and B
 
 
-@dataclass
-class CellArray : 
+class CellArray :
     M : int                        # scalar      (number of cells)
     Xhat : np.ndarray              # 4(p+1) × M  (feature history and εₙ for all cells)
     #Xbuf : np.ndarray             # 4(p+1) × M  (buffer to improve the speed of the partial shift operation)
@@ -104,11 +103,73 @@ class CellArray :
     drawVARMask : np.ndarray
     params : CellParams
 
+    def __init__(self, M, params: CellParams):
+        """
+
+        :param M:
+        :param params:
+        """
+        self.params = params
+        self.M = M
+
+        self.Xhat = zeros32((params.nfeatures * (params.p + 1), M))
+        # Xhat[:nfeatures, :] = randn((nfeatures, M))
+        randn((params.nfeatures, M), out=self.Xhat[:params.nfeatures, :])
+        self.x = params.VAR @ self.Xhat
+        self.Xhat[-params.nfeatures:, :] = self.x
+        cs = np.cumsum(params.wk) / np.sum(params.wk)
+        self.k = np.searchsorted(cs, rand(M))
+        mu_sigma_CtC = empty32((params.nfeatures * 2, M))
+        for kk in range(len(params.wk)):
+            mask = self.k == kk
+            Mk = np.sum(mask)
+            mu_sigma_CtC[:, mask] = params.mu_DtD[:, kk, np.newaxis] + params.LDtD[:, :, kk] @ randn((params.nfeatures * 2, Mk))
+        self.mu = mu_sigma_CtC[:params.nfeatures, :]
+        self.sigma = mu_sigma_CtC[params.nfeatures:, :]
+        self.y = psi(self.mu, self.sigma, gamma_f(params.gamma, self.x))
+        self.resetCoefs = empty32((2, M))
+        self.r = r(self.y[iHRS, :], params.G_HHRS, params.G_LLRS)
+        self.n = np.zeros(M, dtype=np.int64)
+        self.UR = self.y[iUR, :]
+        # Umax = np.repeat(Umax, M)
+        self.Iread = zeros32(M)
+        self.inHRS = np.zeros(M, dtype=bool)
+        self.inLRS = np.zeros(M, dtype=bool)
+        self.setMask = np.zeros(M, dtype=bool)
+        self.resetMask = np.zeros(M, dtype=bool)
+        self.fullResetMask = np.zeros(M, dtype=bool)
+        self.partialResetMask = np.zeros(M, dtype=bool)
+        self.resetCoefsCalcMask = np.zeros(M, dtype=bool)
+        self.drawVARMask = np.zeros(M, dtype=bool)
+
     def __len__(self):
         return self.M
 
     def Imix(self, r, U):
         return (1 - r) * polyval(self.params.LLRS, U) + r * polyval(self.params.HHRS, U)
+
+    def I(self, U):
+        return self.Imix(self.r, U)
+
+    def get_LRS(self) -> np.ndarray:
+        return self.y[iLRS]
+
+    def get_HRS(self) -> np.ndarray:
+        return self.y[iHRS]
+
+    def rIU(self, I, U):
+        IHHRS_U = polyval(self.params.HHRS, U)
+        ILLRS_U = polyval(self.params.LLRS, U)
+        return (I - ILLRS_U) / (IHHRS_U - ILLRS_U)
+
+    def get_rHRS(self, R):
+        return (self.params.G_LLRS - 1 / R) / (self.params.G_LLRS - self.params.G_HHRS)
+
+    def gamma_f(self, x):
+        gamma_out = np.zeros_like(x)
+        for gamma_in_v in self.params.gamma.T:
+            gamma_out = gamma_out * x + gamma_in_v[:, np.newaxis]  # for broadcasting to work..
+        return gamma_out
 
     def applyVoltage(self, Ua):
         """
@@ -121,10 +182,6 @@ class CellArray :
             Ua = np.repeat(float32(Ua), self.M)
 
         Umax = self.params.Umax
-        G_HHRS = self.params.G_HHRS
-        G_LLRS = self.params.G_LLRS
-        HHRS = self.params.HHRS
-        LLRS = self.params.LLRS
         gamma = self.params.gamma
         eta = self.params.eta
         nfeatures = self.params.nfeatures
@@ -139,7 +196,7 @@ class CellArray :
         self.resetCoefsCalcMask = self.drawVARMask & ~self.fullResetMask
 
         if any(self.setMask):
-            self.r[self.setMask] = r(LRS(c)[self.setMask], G_HHRS, G_LLRS)
+            self.r[self.setMask] = self.get_rHRS(self.get_LRS()[self.setMask])
             self.inLRS |= self.setMask
             self.inHRS = self.inHRS & ~self.setMask
             self.UR[self.setMask] = UR(c)[self.setMask]
@@ -153,8 +210,7 @@ class CellArray :
             x1 = self.UR[self.resetCoefsCalcMask]
             x2 = Umax
             y1 = self.Imix(self.r[self.resetCoefsCalcMask], x1)
-            r_HRS = r(HRS(c)[self.resetCoefsCalcMask], G_HHRS, G_LLRS)
-            # y2 = Imix(r_HRS, x2, HHRS, LLRS)
+            r_HRS = self.get_rHRS(self.get_HRS()[self.resetCoefsCalcMask])
             y2 = self.Imix(r_HRS, x2)
             self.resetCoefs[:, self.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, eta)
 
@@ -164,11 +220,11 @@ class CellArray :
 
         if any(self.partialResetMask):
             Itrans = Ireset(self.resetCoefs[0, self.partialResetMask], self.resetCoefs[1, self.partialResetMask], Ua[self.partialResetMask], eta, Umax)
-            self.r[self.partialResetMask] = rIU(Itrans, Ua[self.partialResetMask], HHRS, LLRS)
+            self.r[self.partialResetMask] = self.rIU(Itrans, Ua[self.partialResetMask])
 
         if any(self.fullResetMask):
             self.inHRS |= self.fullResetMask
-            self.r[self.fullResetMask] = r(HRS(c)[self.fullResetMask], G_HHRS, G_LLRS)
+            self.r[self.fullResetMask] = self.get_rHRS(self.get_HRS()[self.fullResetMask])
 
         return c
 
@@ -204,57 +260,8 @@ def load_params(param_fp:str=default_param_fp, p:int=10):
 
 default_params = load_params(default_param_fp)
 
-def CellArrayCPU(M, params:CellParams=default_params):
-    """
-    Initialize an array of cells
-    Name matches Julia version.
-    """
-    # No struct unpacking in python.
-    VAR = params.VAR
-    nfeatures = params.nfeatures
-    p = params.p
-    gamma = params.gamma
-    wk = params.wk
-    muDtD = params.muDtD
-    LDtD = params.LDtD
-    G_HHRS = params.G_HHRS
-    G_LLRS = params.G_LLRS
-    #Umax = params.Umax
-
-    Xhat = zeros32((nfeatures * (p + 1), M))
-    #Xhat[:nfeatures, :] = randn((nfeatures, M))
-    randn((nfeatures, M), out=Xhat[:nfeatures, :])
-    x = VAR @ Xhat
-    Xhat[-nfeatures:, :] = x
-    cs = np.cumsum(wk) / np.sum(wk)
-    k = np.searchsorted(cs, rand(M))
-    musigmaCtC = empty32((nfeatures * 2, M))
-    for kk in range(len(wk)):
-        mask = k == kk
-        Mk = np.sum(mask)
-        musigmaCtC[:, mask] = muDtD[:, kk, np.newaxis] + LDtD[:,:,kk] @ randn((nfeatures * 2, Mk))
-    muCtC = musigmaCtC[:nfeatures, :]
-    sigmaCtC = musigmaCtC[nfeatures:, :]
-    y = psi(muCtC, sigmaCtC, gamma_f(gamma, x))
-    resetCoefs = empty32((2,M))
-    r0 = r(y[iHRS, :], G_HHRS, G_LLRS)
-    n = np.zeros(M, dtype=np.int64)
-    UR = y[iUR, :]
-    #Umax = np.repeat(Umax, M)
-    Iread = zeros32(M)
-    inHRS = np.zeros(M, dtype=bool)
-    inLRS = np.zeros(M, dtype=bool)
-    setMask = np.zeros(M, dtype=bool)
-    resetMask = np.zeros(M, dtype=bool)
-    fullResetMask = np.zeros(M, dtype=bool)
-    partialResetMask = np.zeros(M, dtype=bool)
-    resetCoefsCalcMask = np.zeros(M, dtype=bool)
-    drawVARMask = np.zeros(M, dtype=bool)
-
-    return CellArray(M, Xhat, x, sigmaCtC, muCtC, y, r0, n, k, UR, resetCoefs, Iread,
-                     inHRS, inLRS, setMask, resetMask, fullResetMask, partialResetMask,
-                     resetCoefsCalcMask, drawVARMask, params)
-
+def CellArrayCPU(M):
+    return CellArray(M, default_params)
 
 def HRS(c:CellArray):
     return c.y[iHRS]
@@ -281,11 +288,6 @@ def VAR_sample(c:CellArray):
     c.Xhat[nfeatures:-nfeatures, mask] = c.Xhat[2*nfeatures:, mask]
     c.Xhat[-nfeatures:, mask] = x[:, mask]
 
-def rIU(I, U, HHRS, LLRS):
-    IHHRS_U = polyval(HHRS, U)
-    ILLRS_U = polyval(LLRS, U)
-    return (I - ILLRS_U) / (IHHRS_U - ILLRS_U)
-
 def Imix(r, U, HHRS, LLRS):
     return (1 - r) * polyval(LLRS, U) + r * polyval(HHRS, U)
 
@@ -296,67 +298,6 @@ def resetCoefs(x1, x2, y1, y2, eta):
     a = (y1 - y2) / abs(x2 - x1)**eta
     c = y2
     return np.vstack((a, c))
-
-
-def applyVoltage(c:CellArray, Ua):
-    """
-    Apply voltages from array U to the corresponding cell in the CellArray
-    if U > UR or if U ≤ US, cell states will be modified
-    """
-    if type(Ua) is np.ndarray:
-        Ua = Ua.astype(float32, copy=False)
-    else:
-        Ua = np.repeat(float32(Ua), c.M)
-
-    Umax = c.params.Umax
-    G_HHRS = c.params.G_HHRS
-    G_LLRS = c.params.G_LLRS
-    HHRS = c.params.HHRS
-    LLRS = c.params.LLRS
-    gamma = c.params.gamma
-    eta = c.params.eta
-    nfeatures = c.params.nfeatures
-
-    c.setMask = ~c.inLRS & (Ua <= US(c))
-    c.resetMask = ~c.inHRS & (Ua > c.UR)
-    c.fullResetMask = c.resetMask & (Ua >= Umax)
-    c.partialResetMask = c.resetMask & (Ua < Umax)
-    c.drawVARMask = c.inLRS & c.resetMask
-    c.resetCoefsCalcMask = c.drawVARMask & ~c.fullResetMask
-
-    if any(c.setMask):
-        c.r[c.setMask] = r(LRS(c)[c.setMask], G_HHRS, G_LLRS)
-        c.inLRS |= c.setMask
-        c.inHRS = c.inHRS & ~c.setMask
-        c.UR[c.setMask] = UR(c)[c.setMask]
-
-    if any(c.drawVARMask):
-        VAR_sample(c)
-        c.n += c.drawVARMask
-        c.y = psi(c.mu, c.sigma, gamma_f(gamma, c.Xhat[-nfeatures:, :]))
-
-    if any(c.resetCoefsCalcMask):
-        x1 = c.UR[c.resetCoefsCalcMask]
-        x2 = Umax
-        y1 = Imix(c.r[c.resetCoefsCalcMask], x1, HHRS, LLRS)
-        r_HRS = r(HRS(c)[c.resetCoefsCalcMask], G_HHRS, G_LLRS)
-        y2 = Imix(r_HRS, x2, HHRS, LLRS)
-        c.resetCoefs[:, c.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, eta)
-
-    if any(c.resetMask):
-        c.inLRS = c.inLRS & ~c.resetMask
-        c.UR[c.resetMask] = Ua[c.resetMask]
-
-    if any(c.partialResetMask):
-        Itrans = Ireset(c.resetCoefs[0, c.partialResetMask], c.resetCoefs[1, c.partialResetMask], Ua[c.partialResetMask], eta, Umax)
-        c.r[c.partialResetMask] = rIU(Itrans, Ua[c.partialResetMask], HHRS, LLRS)
-
-    if any(c.fullResetMask):
-        c.inHRS |= c.fullResetMask
-        c.r[c.fullResetMask] = r(HRS(c)[c.fullResetMask], G_HHRS, G_LLRS)
-
-    return c
-
 
 def Iread(c:CellArray, U=Uread, BW=1e8):
     """
