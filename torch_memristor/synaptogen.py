@@ -172,6 +172,11 @@ class CellArray :
     def get_rHRS(self, R):
         return (self.params.G_LLRS - 1 / R) / (self.params.G_LLRS - self.params.G_HHRS)
 
+    def resetCoefs(self,x1, x2, y1, y2):
+        a = (y1 - y2) / abs(x2 - x1) ** self.params.eta
+        c = y2
+        return np.vstack((a, c))
+
     def var_sample(self):
         """
         Draw the next VAR terms, updating the history matrix (c.Xhat)
@@ -200,8 +205,6 @@ class CellArray :
         eta = self.params.eta
         nfeatures = self.params.nfeatures
 
-        c = self
-
         self.setMask = ~self.inLRS & (Ua <= self.get_US())
         self.resetMask = ~self.inHRS & (Ua > self.UR)
         self.fullResetMask = self.resetMask & (Ua >= Umax)
@@ -226,7 +229,7 @@ class CellArray :
             y1 = self.Imix(self.r[self.resetCoefsCalcMask], x1)
             r_HRS = self.get_rHRS(self.get_HRS()[self.resetCoefsCalcMask])
             y2 = self.Imix(r_HRS, x2)
-            self.resetCoefs[:, self.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, eta)
+            self.resetCoefs[:, self.resetCoefsCalcMask] = self.resetCoefs(x1, x2, y1, y2)
 
         if any(self.resetMask):
             self.inLRS = self.inLRS & ~self.resetMask
@@ -239,8 +242,6 @@ class CellArray :
         if any(self.fullResetMask):
             self.inHRS |= self.fullResetMask
             self.r[self.fullResetMask] = self.get_rHRS(self.get_HRS()[self.fullResetMask])
-
-        return c
 
 
 def load_params(param_fp:str=default_param_fp, p:int=10):
@@ -277,18 +278,12 @@ default_params = load_params(default_param_fp)
 def CellArrayCPU(M):
     return CellArray(M, default_params)
 
-
-
 def Imix(r, U, HHRS, LLRS):
     return (1 - r) * polyval(LLRS, U) + r * polyval(HHRS, U)
 
 def I(c:CellArray, U):
     return Imix(c.r, U, c.params.HHRS, c.params.LLRS)
 
-def resetCoefs(x1, x2, y1, y2, eta):
-    a = (y1 - y2) / abs(x2 - x1)**eta
-    c = y2
-    return np.vstack((a, c))
 
 def Iread(c:CellArray, U=Uread, BW=1e8):
     """
