@@ -333,5 +333,7 @@ def memristor_tests():
     # try to set weight to 0.5
 
 if __name__ == "__main__":
-    test_toy_memristor()
-    memristor_tests()
+    from .memristor_modules import compute_correction_factor
+    compute_correction_factor()
+    # test_toy_memristor()
+    # memristor_tests()
