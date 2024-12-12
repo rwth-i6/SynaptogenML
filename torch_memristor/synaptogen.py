@@ -31,7 +31,7 @@ rand = partial(rng.random, dtype=float32)
 Uread = float32(0.2)
 e = float32(1.602176634e-19)
 kBT = float32(1.380649e-23 * 300)
-#σClip = float32(3.5)
+#sigmaClip = float32(3.5)
 iHRS, iUS, iLRS, iUR = 0, 1, 2, 3
 
 moduledir = os.path.dirname(__file__)
@@ -40,39 +40,39 @@ default_param_fp = os.path.join(moduledir, "default_params.json")
 def r(R, G_HHRS, G_LLRS):
     return (G_LLRS - 1/R) / (G_LLRS - G_HHRS)
 
-def gamma(γ, x):
+def gamma_f(gamma, x):
     y = np.zeros_like(x)
-    for γv in γ.T:
-        y = y * x + γv[:, np.newaxis] # for broadcasting to work..
+    for gammav in gamma.T:
+        y = y * x + gammav[:, np.newaxis] # for broadcasting to work..
     return y
 
-def psi(μ, σ, x):
-    y = μ + σ * x
+def psi(mu, sigma, x):
+    y = mu + sigma * x
     y[iHRS, :] = 10 ** y[iHRS, :]
     return y
 
-def Ireset(a, c, U, η, Umax):
-    return a * abs(Umax - U)**η + c
+def Ireset(a, c, U, eta, Umax):
+    return a * abs(Umax - U)**eta + c
 
 
 @dataclass
 class CellParams : 
     Umax : float           # Maximum voltage applied during the experiment.  defines the point where HRS is reached.
     U0 : float             # Voltage used in the definition of resistance R = U₀ / I(U₀)
-    η : float              # Sets the curvature of the reset transition
+    eta : float              # Sets the curvature of the reset transition
     nfeatures : int        # Number of features for the VAR model
     p : int                # Order of the VAR model (how many cycles of history remembered)
     K : int                # How many components in the GMM for modeling device-to-device distribution
-    γdeg : int             # Degree of the non-linear transformation polynomials 
+    gammadeg : int             # Degree of the non-linear transformation polynomials
     G_HHRS : float         # Conductance of the HHRS 
     G_LLRS : float         # Conductance of the LLRS
     HHRSdeg : int          # Degree of the HHRS polynomial
     LLRSdeg : int          # Degree of the LLRS polynomial
     HHRS : np.ndarray      # HHRS coefficients.  Not a vector because of polyval shenanigans
     LLRS : np.ndarray      # LLRS coefficients
-    γ : np.ndarray         # non-linear transformation coefficients
+    gamma : np.ndarray         # non-linear transformation coefficients
     wk : np.ndarray        # weights of the GMM components
-    μDtD : np.ndarray      # mean vectors for the GMM
+    muDtD : np.ndarray      # mean vectors for the GMM
     LDtD : np.ndarray      # Cholesky decomposition of covariance matrices for the GMM (lower triangular)
     VAR : np.ndarray       # VAR coefficients, including A and B
 
@@ -83,8 +83,8 @@ class CellArray :
     Xhat : np.ndarray              # 4(p+1) × M  (feature history and εₙ for all cells)
     #Xbuf : np.ndarray             # 4(p+1) × M  (buffer to improve the speed of the partial shift operation)
     x : np.ndarray                 # 4 × M       (generated normal feature vectors ̂x*ₙ, basically also a buffer)
-    σ : np.ndarray                 # 4 × M       (CtC scale vectors)
-    μ : np.ndarray                 # 4 × M       (CtC offset vectors)
+    sigma : np.ndarray                 # 4 × M       (CtC scale vectors)
+    mu : np.ndarray                 # 4 × M       (CtC offset vectors)
     y : np.ndarray                 # 4 × M       (scaled feature vector)
     r : np.ndarray                 # M × 1       (device state variables)
     n : np.ndarray                 # M × 1       (cycle numbers)
@@ -144,7 +144,7 @@ class CellArray :
         if any(self.drawVARMask):
             VAR_sample(c)
             self.n += self.drawVARMask
-            self.y = psi(self.μ, self.σ, gamma(gamma, self.Xhat[-nfeatures:, :]))
+            self.y = psi(self.mu, self.sigma, gamma(gamma, self.Xhat[-nfeatures:, :]))
 
         if any(self.resetCoefsCalcMask):
             x1 = self.UR[self.resetCoefsCalcMask]
@@ -194,10 +194,10 @@ def load_params(param_fp:str=default_param_fp, p:int=10):
     wk = array32(json_params['wk'])
     K = wk.shape[0]
     LDtD = np.moveaxis(array32(json_params['LDtD']).reshape(2*nfeatures, K, 2*nfeatures), 1, 2)
-    μDtD = array32(json_params['mu_DtD'])
+    muDtD = array32(json_params['mu_DtD'])
 
     return CellParams(Umax, U0, eta, nfeatures, p, K, gamma_deg, G_HHRS, G_LLRS, HHRSdeg, LLRSdeg,
-                      HHRS, LLRS, gamma, wk, μDtD, LDtD, VAR)
+                      HHRS, LLRS, gamma, wk, muDtD, LDtD, VAR)
 
 default_params = load_params(default_param_fp)
 
@@ -210,9 +210,9 @@ def CellArrayCPU(M, params:CellParams=default_params):
     VAR = params.VAR
     nfeatures = params.nfeatures
     p = params.p
-    γ = params.γ
+    gamma = params.gamma
     wk = params.wk
-    μDtD = params.μDtD
+    muDtD = params.muDtD
     LDtD = params.LDtD
     G_HHRS = params.G_HHRS
     G_LLRS = params.G_LLRS
@@ -225,14 +225,14 @@ def CellArrayCPU(M, params:CellParams=default_params):
     Xhat[-nfeatures:, :] = x
     cs = np.cumsum(wk) / np.sum(wk)
     k = np.searchsorted(cs, rand(M))
-    μσCtC = empty32((nfeatures * 2, M))
+    musigmaCtC = empty32((nfeatures * 2, M))
     for kk in range(len(wk)):
         mask = k == kk
         Mk = np.sum(mask)
-        μσCtC[:, mask] = μDtD[:, kk, np.newaxis] + LDtD[:,:,kk] @ randn((nfeatures * 2, Mk))
-    μCtC = μσCtC[:nfeatures, :]
-    σCtC = μσCtC[nfeatures:, :]
-    y = psi(μCtC, σCtC, gamma(γ, x))
+        musigmaCtC[:, mask] = muDtD[:, kk, np.newaxis] + LDtD[:,:,kk] @ randn((nfeatures * 2, Mk))
+    muCtC = musigmaCtC[:nfeatures, :]
+    sigmaCtC = musigmaCtC[nfeatures:, :]
+    y = psi(muCtC, sigmaCtC, gamma_f(gamma, x))
     resetCoefs = empty32((2,M))
     r0 = r(y[iHRS, :], G_HHRS, G_LLRS)
     n = np.zeros(M, dtype=np.int64)
@@ -248,7 +248,7 @@ def CellArrayCPU(M, params:CellParams=default_params):
     resetCoefsCalcMask = np.zeros(M, dtype=bool)
     drawVARMask = np.zeros(M, dtype=bool)
 
-    return CellArray(M, Xhat, x, σCtC, μCtC, y, r0, n, k, UR, resetCoefs, Iread,
+    return CellArray(M, Xhat, x, sigmaCtC, muCtC, y, r0, n, k, UR, resetCoefs, Iread,
                      inHRS, inLRS, setMask, resetMask, fullResetMask, partialResetMask,
                      resetCoefsCalcMask, drawVARMask, params)
 
@@ -289,8 +289,8 @@ def Imix(r, U, HHRS, LLRS):
 def I(c:CellArray, U):
     return Imix(c.r, U, c.params.HHRS, c.params.LLRS)
 
-def resetCoefs(x1, x2, y1, y2, η):
-    a = (y1 - y2) / abs(x2 - x1)**η
+def resetCoefs(x1, x2, y1, y2, eta):
+    a = (y1 - y2) / abs(x2 - x1)**eta
     c = y2
     return np.vstack((a, c))
 
@@ -310,8 +310,8 @@ def applyVoltage(c:CellArray, Ua):
     G_LLRS = c.params.G_LLRS
     HHRS = c.params.HHRS
     LLRS = c.params.LLRS
-    γ = c.params.γ
-    η = c.params.η
+    gamma = c.params.gamma
+    eta = c.params.eta
     nfeatures = c.params.nfeatures
 
     c.setMask = ~c.inLRS & (Ua <= US(c))
@@ -330,7 +330,7 @@ def applyVoltage(c:CellArray, Ua):
     if any(c.drawVARMask):
         VAR_sample(c)
         c.n += c.drawVARMask
-        c.y = psi(c.μ, c.σ, gamma(γ, c.Xhat[-nfeatures:, :]))
+        c.y = psi(c.mu, c.sigma, gamma_f(gamma, c.Xhat[-nfeatures:, :]))
 
     if any(c.resetCoefsCalcMask):
         x1 = c.UR[c.resetCoefsCalcMask]
@@ -338,14 +338,14 @@ def applyVoltage(c:CellArray, Ua):
         y1 = Imix(c.r[c.resetCoefsCalcMask], x1, HHRS, LLRS)
         r_HRS = r(HRS(c)[c.resetCoefsCalcMask], G_HHRS, G_LLRS)
         y2 = Imix(r_HRS, x2, HHRS, LLRS)
-        c.resetCoefs[:, c.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, η)
+        c.resetCoefs[:, c.resetCoefsCalcMask] = resetCoefs(x1, x2, y1, y2, eta)
 
     if any(c.resetMask):
         c.inLRS = c.inLRS & ~c.resetMask
         c.UR[c.resetMask] = Ua[c.resetMask]
 
     if any(c.partialResetMask):
-        Itrans = Ireset(c.resetCoefs[0, c.partialResetMask], c.resetCoefs[1, c.partialResetMask], Ua[c.partialResetMask], η, Umax)
+        Itrans = Ireset(c.resetCoefs[0, c.partialResetMask], c.resetCoefs[1, c.partialResetMask], Ua[c.partialResetMask], eta, Umax)
         c.r[c.partialResetMask] = rIU(Itrans, Ua[c.partialResetMask], HHRS, LLRS)
 
     if any(c.fullResetMask):
@@ -371,9 +371,9 @@ def Iread(c:CellArray, U=Uread, BW=1e8):
     Inoiseless = I(c, U)
     johnson = 4*kBT*BW*np.abs(Inoiseless/U)
     shot = 2*e*np.abs(Inoiseless)*BW
-    σ_total = np.sqrt(johnson + shot)
+    sigma_total = np.sqrt(johnson + shot)
     randn(c.M, out=c.Iread)
-    c.Iread = Inoiseless + c.Iread * σ_total
+    c.Iread = Inoiseless + c.Iread * sigma_total
     return c.Iread
 
 
@@ -424,7 +424,7 @@ def test(M=2**5, N=2**6):
                 Uplot = Umat[:, m, n]
                 axs[i,j].plot(Uplot, Iplot, lw=lw, alpha=alpha, color=colors[n])
                 if j == 0:
-                    axs[i,j].set_ylabel("I [μA]")
+                    axs[i,j].set_ylabel("I [muA]")
                 if i == sqM - 1:
                     axs[i,j].set_xlabel("U [V]")
 
