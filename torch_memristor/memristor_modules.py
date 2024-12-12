@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .synaptogen import CellArrayCPU, applyVoltage
+from .synaptogen import CellArrayCPU
 from .quant_modules import LinearQuant, ActivationQuantizer
 
 
@@ -297,8 +297,8 @@ class MemristorLinear(nn.Module):
             size = flat.shape[0]
             positive_cells = CellArrayCPU(size)
             negative_cells = CellArrayCPU(size)
-            applyVoltage(positive_cells, positive_weights * -2.0)
-            applyVoltage(negative_cells, negative_weights * -2.0)
+            positive_cells.applyVoltage(positive_weights * -2.0)
+            negative_cells.applyVoltage(negative_weights * -2.0)
 
             self.memristors[i].init_from_paired_cell_array_input_major(
                 positive_cells, negative_cells
@@ -324,7 +324,7 @@ class MemristorLinear(nn.Module):
 
 def compute_correction_factor():
 
-    from .synaptogen import CellArrayCPU, applyVoltage, Iread
+    from .synaptogen import CellArrayCPU, Iread
 
     correction_factors_paired = []
     correction_factors_single = []
@@ -344,7 +344,7 @@ def compute_correction_factor():
         zero_offset_nc = np.mean(zero_offsets_nc)
 
         # applyVoltage(estimation_cells, -2.5)
-        applyVoltage(estimation_cells, np.asarray([-2.5] * 100 + [0.0] * 100))
+        estimation_cells.applyVoltage(np.asarray([-2.5] * 100 + [0.0] * 100))
         correction_factors = []
         correction_factors_nc = []
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
@@ -357,7 +357,7 @@ def compute_correction_factor():
             correction_factors_nc.append(correction_factor_nc)
             # print(f"check value: {check:.2} gives correction factor {correction_factor}")
 
-        applyVoltage(estimation_cells, 2.5)
+        estimation_cells.applyVoltage(2.5)
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
             out = Iread(estimation_cells, check)
             # print(f"check value: {check:.2} gives min raw value: {np.min(out)}")

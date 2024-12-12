@@ -11,6 +11,7 @@ import os
 
 from dataclasses import dataclass
 from functools import partial
+from typing import Optional
 
 import numpy as np
 from numpy import polyval, sqrt, float32, abs
@@ -68,7 +69,7 @@ class CellParams :
     G_LLRS : float         # Conductance of the LLRS
     HHRSdeg : int          # Degree of the HHRS polynomial
     LLRSdeg : int          # Degree of the LLRS polynomial
-    HHRS : np.ndarray      # HHRS coefficients.  Not a vector because of polyval shenanigans
+    HHRS : np.ndarray      # HHRS coefficients.
     LLRS : np.ndarray      # LLRS coefficients
     gamma : np.ndarray         # non-linear transformation coefficients
     wk : np.ndarray        # weights of the GMM components
@@ -106,7 +107,7 @@ class CellArray :
     def __len__(self):
         return self.M
 
-    def Imix(r, U):
+    def Imix(self, r, U):
         return (1 - r) * polyval(self.params.LLRS, U) + r * polyval(self.params.HHRS, U)
 
     def applyVoltage(self, Ua):
@@ -128,6 +129,8 @@ class CellArray :
         eta = self.params.eta
         nfeatures = self.params.nfeatures
 
+        c = self
+
         self.setMask = ~self.inLRS & (Ua <= US(c))
         self.resetMask = ~self.inHRS & (Ua > self.UR)
         self.fullResetMask = self.resetMask & (Ua >= Umax)
@@ -144,7 +147,7 @@ class CellArray :
         if any(self.drawVARMask):
             VAR_sample(c)
             self.n += self.drawVARMask
-            self.y = psi(self.mu, self.sigma, gamma(gamma, self.Xhat[-nfeatures:, :]))
+            self.y = psi(self.mu, self.sigma, gamma_f(gamma, self.Xhat[-nfeatures:, :]))
 
         if any(self.resetCoefsCalcMask):
             x1 = self.UR[self.resetCoefsCalcMask]
@@ -402,7 +405,7 @@ def test(M=2**5, N=2**6):
     for n in range(N):
         ymat[:, :, n] = cells.y 
         for i in range(pts):
-            c = applyVoltage(cells, Umat[i, :, n])
+            cells.applyVoltage(Umat[i, :, n])
             # no noise (otherwise use Iread)
             Imat[i, :, n] = I(cells, Umat[i, :, n])
             #I[i, :, n] = Iread(c, Umat[i,1], 8, -200f-6, 200f-6, 1f9)

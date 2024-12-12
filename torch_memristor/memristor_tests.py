@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .synaptogen import CellArrayCPU, applyVoltage
+from .synaptogen import CellArrayCPU
 from .quant_modules import LinearQuant, ActivationQuantizer
 from .memristor_modules import MemristorArray, DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2, poly_mul
 
@@ -20,8 +20,8 @@ def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: Ac
     size = flat.shape[0]
     positive_cells = CellArrayCPU(size)
     negative_cells = CellArrayCPU(size)
-    applyVoltage(positive_cells, positive_weights * -2.0)
-    applyVoltage(negative_cells, negative_weights * -2.0)
+    positive_cells.applyVoltage(positive_weights * -2.0)
+    negative_cells.applyVoltage(negative_weights * -2.0)
     print(flat[:20])
     print(positive_cells.r[:20])
     print(negative_cells.r[:20])
@@ -80,8 +80,8 @@ def test_toy_memristor():
     size = flat.shape[0]
     positive_cells = CellArrayCPU(size)
     negative_cells = CellArrayCPU(size)
-    applyVoltage(positive_cells, positive_weights * -2.0)
-    applyVoltage(negative_cells, negative_weights * -2.0)
+    positive_cells.applyVoltage(positive_weights * -2.0)
+    negative_cells.applyVoltage(negative_weights * -2.0)
     print(flat[:20])
     print(positive_cells.r[:20])
     print(negative_cells.r[:20])
@@ -122,7 +122,7 @@ def memristor_tests():
 
     torch.set_printoptions(precision=8)
 
-    from .synaptogen import CellArrayCPU, applyVoltage, Iread
+    from .synaptogen import CellArrayCPU, Iread
 
     cells = CellArrayCPU(2)  # 1 in 2 out, simple differential
     print(cells.params.HHRSdeg)
@@ -186,7 +186,7 @@ def memristor_tests():
     zero_offset_nc = np.mean(zero_offsets_nc)
 
     # applyVoltage(estimation_cells, -2.5)
-    applyVoltage(estimation_cells, np.asarray([-2.5] * 100 + [0.0] * 100))
+    estimation_cells.applyVoltage(np.asarray([-2.5] * 100 + [0.0] * 100))
     correction_factors = []
     correction_factors_nc = []
     for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
@@ -199,7 +199,7 @@ def memristor_tests():
         correction_factors_nc.append(correction_factor_nc)
         print(f"check value: {check:.2} gives correction factor {correction_factor}")
 
-    applyVoltage(estimation_cells, 2.5)
+    estimation_cells.applyVoltage(2.5)
     for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
         out = Iread(estimation_cells, check)
         print(f"check value: {check:.2} gives min raw value: {np.min(out)}")
@@ -213,9 +213,9 @@ def memristor_tests():
     # Do sweeps to determine best value to get a weight of 0.5
     estimation_cells = CellArrayCPU(2000)
     # set low resistance
-    applyVoltage(estimation_cells, -2)
+    estimation_cells.applyVoltage(-2)
     for u_for_05 in np.arange(0, 2, 0.01):
-        applyVoltage(estimation_cells, u_for_05)
+        estimation_cells.applyVoltage(u_for_05)
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
             out = Iread(estimation_cells, 0.6)
             mean_for_readout_u = (np.mean(out) - zero_offsets[i]) * correction_factor_final
@@ -248,10 +248,10 @@ def memristor_tests():
         print(
             f"{test_value} * 0 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}")
 
-    test_cells = applyVoltage(test_cells, np.asarray([-2.0] * 1000 + [0.0] * 1000))
+    test_cells.applyVoltage(np.asarray([-2.0] * 1000 + [0.0] * 1000))
 
     torch_cells = MemristorArray(1, 2000)
-    torch_cells.init_from_cell_array_output_major(test_cells)
+    torch_cells.init_from_cell_array_input_major(test_cells)
 
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
@@ -296,7 +296,7 @@ def memristor_tests():
     #     print(f"{test_value} * 1 = {result:.3} +/- {deviation:.3}")
 
 
-    test_cells = applyVoltage(test_cells, np.asarray([u_for_05] * 1000 + [0.0] * 1000))
+    test_cells.applyVoltage(np.asarray([u_for_05] * 1000 + [0.0] * 1000))
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
         outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
@@ -306,8 +306,8 @@ def memristor_tests():
         min = np.min(outs)
         print(f"{test_value} * 0.5 = {result:.3} +/- {deviation:.3}, min: {min}, max: {max}")
 
-    test_cells = applyVoltage(test_cells, np.asarray([2.0] * 2000))
-    test_cells = applyVoltage(test_cells, np.asarray([-0.0] * 1000 + [-2.0] * 1000))
+    test_cells.applyVoltage(np.asarray([2.0] * 2000))
+    test_cells.applyVoltage(np.asarray([-0.0] * 1000 + [-2.0] * 1000))
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
         outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
