@@ -130,6 +130,7 @@ class CellArray :
         self.resetCoefs = empty32((2, M))
         self.r = r(self.y[iHRS, :], params.G_HHRS, params.G_LLRS)
         self.n = np.zeros(M, dtype=np.int64)
+        # Todo: this needs better naming, overlaps with self.get_UR
         self.UR = self.y[iUR, :]
         # Umax = np.repeat(Umax, M)
         self.Iread = zeros32(M)
@@ -157,6 +158,12 @@ class CellArray :
     def get_HRS(self) -> np.ndarray:
         return self.y[iHRS]
 
+    def get_US(self):
+        return self.y[iUS]
+
+    def get_UR(self):
+        return self.y[iUR]
+
     def rIU(self, I, U):
         IHHRS_U = polyval(self.params.HHRS, U)
         ILLRS_U = polyval(self.params.LLRS, U)
@@ -164,12 +171,6 @@ class CellArray :
 
     def get_rHRS(self, R):
         return (self.params.G_LLRS - 1 / R) / (self.params.G_LLRS - self.params.G_HHRS)
-
-    def gamma_f(self, x):
-        gamma_out = np.zeros_like(x)
-        for gamma_in_v in self.params.gamma.T:
-            gamma_out = gamma_out * x + gamma_in_v[:, np.newaxis]  # for broadcasting to work..
-        return gamma_out
 
     def var_sample(self):
         """
@@ -201,7 +202,7 @@ class CellArray :
 
         c = self
 
-        self.setMask = ~self.inLRS & (Ua <= US(c))
+        self.setMask = ~self.inLRS & (Ua <= self.get_US())
         self.resetMask = ~self.inHRS & (Ua > self.UR)
         self.fullResetMask = self.resetMask & (Ua >= Umax)
         self.partialResetMask = self.resetMask & (Ua < Umax)
@@ -212,7 +213,7 @@ class CellArray :
             self.r[self.setMask] = self.get_rHRS(self.get_LRS()[self.setMask])
             self.inLRS |= self.setMask
             self.inHRS = self.inHRS & ~self.setMask
-            self.UR[self.setMask] = UR(c)[self.setMask]
+            self.UR[self.setMask] = self.get_UR()[self.setMask]
 
         if any(self.drawVARMask):
             self.var_sample()
@@ -276,17 +277,7 @@ default_params = load_params(default_param_fp)
 def CellArrayCPU(M):
     return CellArray(M, default_params)
 
-def HRS(c:CellArray):
-    return c.y[iHRS]
 
-def LRS(c:CellArray):
-    return c.y[iLRS]
-
-def US(c:CellArray):
-    return c.y[iUS]
-
-def UR(c:CellArray):
-    return c.y[iUR]
 
 def Imix(r, U, HHRS, LLRS):
     return (1 - r) * polyval(LLRS, U) + r * polyval(HHRS, U)
