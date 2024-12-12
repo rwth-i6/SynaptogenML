@@ -211,13 +211,14 @@ def memristor_tests():
     correction_factor_nc_final = np.mean(correction_factors_nc) / 0.6
 
     # Do sweeps to determine best value to get a weight of 0.5
-    estimation_cells = CellArrayCPU(2000)
+    estimation_cells = CellArrayCPU(200)
     # set low resistance
-    estimation_cells.applyVoltage(-2)
+    estimation_cells.applyVoltage(np.asarray([-2.0] * 100 + [0.0] * 100))
     for u_for_05 in np.arange(0, 2, 0.01):
-        estimation_cells.applyVoltage(u_for_05)
+        estimation_cells.applyVoltage(np.asarray([u_for_05] * 100 + [0.0] * 100))
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
-            out = Iread(estimation_cells, 0.6)
+            cell_out = Iread(estimation_cells, 0.6)
+            out = (cell_out[:100] - cell_out[100:])
             mean_for_readout_u = (np.mean(out) - zero_offsets[i]) * correction_factor_final
         mean = np.mean(mean_for_readout_u)
         if mean <= 0.5:
@@ -336,4 +337,4 @@ if __name__ == "__main__":
     from .memristor_modules import compute_correction_factor
     compute_correction_factor()
     # test_toy_memristor()
-    # memristor_tests()
+    memristor_tests()
