@@ -33,13 +33,11 @@ Uread = float32(0.2)
 e = float32(1.602176634e-19)
 kBT = float32(1.380649e-23 * 300)
 #sigmaClip = float32(3.5)
-iHRS, iUS, iLRS, iUR = 0, 1, 2, 3
+HRS_INDEX, US_INDEX, LRS_INDEX, UR_INDEX = 0, 1, 2, 3
 
 moduledir = os.path.dirname(__file__)
 default_param_fp = os.path.join(moduledir, "default_params.json")
 
-def r(R, G_HHRS, G_LLRS):
-    return (G_LLRS - 1/R) / (G_LLRS - G_HHRS)
 
 def gamma_f(gamma, x):
     y = np.zeros_like(x)
@@ -49,11 +47,8 @@ def gamma_f(gamma, x):
 
 def psi(mu, sigma, x):
     y = mu + sigma * x
-    y[iHRS, :] = 10 ** y[iHRS, :]
+    y[HRS_INDEX, :] = 10 ** y[HRS_INDEX, :]
     return y
-
-def Ireset(a, c, U, eta, Umax):
-    return a * abs(Umax - U)**eta + c
 
 
 @dataclass
@@ -128,10 +123,10 @@ class CellArray :
         self.sigma = mu_sigma_CtC[params.nfeatures:, :]
         self.y = psi(self.mu, self.sigma, gamma_f(params.gamma, self.x))
         self.resetCoefs = empty32((2, M))
-        self.r = r(self.y[iHRS, :], params.G_HHRS, params.G_LLRS)
+        self.r = (params.G_LLRS - (1/self.y[HRS_INDEX, :])) / (params.G_LLRS - params.G_HHRS)
         self.n = np.zeros(M, dtype=np.int64)
         # Todo: this needs better naming, overlaps with self.get_UR
-        self.UR = self.y[iUR, :]
+        self.UR = self.y[UR_INDEX, :]
         # Umax = np.repeat(Umax, M)
         self.Iread = zeros32(M)
         self.inHRS = np.zeros(M, dtype=bool)
@@ -152,17 +147,20 @@ class CellArray :
     def I(self, U):
         return self.Imix(self.r, U)
 
+    def Ireset(self, a, c, U):
+        return a * abs(self.params.Umax - U)**self.params.eta + c
+
     def get_LRS(self) -> np.ndarray:
-        return self.y[iLRS]
+        return self.y[LRS_INDEX]
 
     def get_HRS(self) -> np.ndarray:
-        return self.y[iHRS]
+        return self.y[HRS_INDEX]
 
     def get_US(self):
-        return self.y[iUS]
+        return self.y[US_INDEX]
 
     def get_UR(self):
-        return self.y[iUR]
+        return self.y[UR_INDEX]
 
     def rIU(self, I, U):
         IHHRS_U = polyval(self.params.HHRS, U)
@@ -202,7 +200,6 @@ class CellArray :
 
         Umax = self.params.Umax
         gamma = self.params.gamma
-        eta = self.params.eta
         nfeatures = self.params.nfeatures
 
         self.setMask = ~self.inLRS & (Ua <= self.get_US())
@@ -236,7 +233,7 @@ class CellArray :
             self.UR[self.resetMask] = Ua[self.resetMask]
 
         if any(self.partialResetMask):
-            Itrans = Ireset(self.resetCoefs[0, self.partialResetMask], self.resetCoefs[1, self.partialResetMask], Ua[self.partialResetMask], eta, Umax)
+            Itrans = self.Ireset(self.resetCoefs[0, self.partialResetMask], self.resetCoefs[1, self.partialResetMask], Ua[self.partialResetMask])
             self.r[self.partialResetMask] = self.rIU(Itrans, Ua[self.partialResetMask])
 
         if any(self.fullResetMask):
