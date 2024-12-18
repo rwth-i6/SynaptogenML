@@ -6,14 +6,28 @@ from torch import nn
 
 from .synaptogen import CellArrayCPU
 from .quant_modules import LinearQuant, ActivationQuantizer
-from .memristor_modules import MemristorArray, DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2, poly_mul
+from .memristor_modules import (
+    MemristorArray,
+    DacAdcHardwareSettings,
+    DacAdcPair,
+    PairedMemristorArrayV2,
+    poly_mul,
+    poly_mul_horner,
+)
 
 
-def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: ActivationQuantizer,
-                               linear_quant: LinearQuant):
+def linear_quant_to_mem_tester(
+    example_input: torch.Tensor,
+    activation_quant: ActivationQuantizer,
+    linear_quant: LinearQuant,
+):
     quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
-    quant_weights_scaled = torch.torch.round(quant_weights / linear_quant.weight_fake_quant.scale).to(dtype=torch.int32)
-    quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled, 0, 1)  # [out, in] -> [in, out]
+    quant_weights_scaled = torch.torch.round(
+        quant_weights / linear_quant.weight_fake_quant.scale
+    ).to(dtype=torch.int32)
+    quant_weights_scaled_transposed = torch.transpose(
+        quant_weights_scaled, 0, 1
+    )  # [out, in] -> [in, out]
     flat = torch.flatten(quant_weights_scaled_transposed)
     positive_weights = torch.clamp(flat, 0, 1).numpy()
     negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
@@ -26,14 +40,18 @@ def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: Ac
     print(positive_cells.r[:20])
     print(negative_cells.r[:20])
 
-    pma = PairedMemristorArrayV2(in_features=linear_quant.in_features, out_features=linear_quant.out_features)
+    pma = PairedMemristorArrayV2(
+        in_features=linear_quant.in_features, out_features=linear_quant.out_features
+    )
     pma.init_from_paired_cell_array_input_major(positive_cells, negative_cells)
 
     scale = activation_quant.scale
     print("scale")
     print(scale)
     print(torch.max(example_input))
-    normalized_input = example_input / activation_quant.scale / activation_quant.quant_max
+    normalized_input = (
+        example_input / activation_quant.scale / activation_quant.quant_max
+    )
     print(torch.max(normalized_input))
 
     hardware_settings = DacAdcHardwareSettings(
@@ -41,7 +59,7 @@ def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: Ac
         output_precision_bits=5,
         output_range_bits=6,
         hardware_input_vmax=0.6,
-        hardware_output_current_scaling=8020.
+        hardware_output_current_scaling=8020.0,
     )
     wandler = DacAdcPair(hardware_settings=hardware_settings)
     mem_in = wandler.dac(normalized_input)
@@ -55,7 +73,12 @@ def linear_quant_to_mem_tester(example_input: torch.Tensor, activation_quant: Ac
     print(torch.max(out))
     print("weight_max_scale")
     print(linear_quant.weight_fake_quant.scale)
-    scaled_out = out * linear_quant.weight_fake_quant.scale * activation_quant.scale * activation_quant.quant_max
+    scaled_out = (
+        out
+        * linear_quant.weight_fake_quant.scale
+        * activation_quant.scale
+        * activation_quant.quant_max
+    )
     print("value out")
     print(torch.max(scaled_out))
 
@@ -73,7 +96,9 @@ def test_toy_memristor():
         ]
     )
     quant_weights_scaled = torch.tensor(weight_array).to(dtype=torch.int32)
-    quant_weights_scaled_transposed = torch.transpose(quant_weights_scaled, 0, 1)  # [out, in] -> [in, out]
+    quant_weights_scaled_transposed = torch.transpose(
+        quant_weights_scaled, 0, 1
+    )  # [out, in] -> [in, out]
     flat = torch.flatten(quant_weights_scaled_transposed)
     positive_weights = torch.clamp(flat, 0, 1).numpy()
     negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
@@ -94,26 +119,27 @@ def test_toy_memristor():
         output_precision_bits=5,
         output_range_bits=5,
         hardware_input_vmax=0.6,
-        hardware_output_current_scaling=8020.
+        hardware_output_current_scaling=8020.0,
     )
     wandler = DacAdcPair(hardware_settings=hardware_settings)
     # B x I = 1x2
-    normalized_input = torch.Tensor(
-        [[1.0, -0.5]]
-    )
+    normalized_input = torch.Tensor([[1.0, -0.5]])
     mem_in = wandler.dac(normalized_input)
     print("mem in")
     print(mem_in)
     out = wandler.adc(pma(mem_in))
     print(out)
 
+
 def test_polymul():
     poly_weight = torch.abs(torch.rand((4)))
     print(poly_weight)
     inp = torch.abs(torch.rand((6, 8, 2)))
     print(inp[0][0])
-    result = poly_mul(3, poly_weight, inp)
+    result = poly_mul(poly_weight, inp)
     print(result[0][0])
+    result_h = poly_mul_horner(poly_weight, inp)
+    assert torch.allclose(result, result_h)
 
 
 def memristor_tests():
@@ -147,12 +173,16 @@ def memristor_tests():
 
     low_poly = polyval(cells.params.LLRS, input_high)
     print(f"low_poly: {low_poly}")
-    low_poly_torch = poly_mul(cells.params.LLRSdeg, torch_cells.resistance_weighted_poly_low, torch.Tensor(input_high))
+    low_poly_torch = poly_mul(
+        torch_cells.resistance_weighted_poly_low, torch.Tensor(input_high)
+    )
     print(f"low_poly_torch {low_poly_torch}")
 
     high_poly = polyval(cells.params.HHRS, input_high)
     print(f"high_poly: {high_poly}")
-    high_poly_torch = poly_mul(cells.params.HHRSdeg, torch_cells.resistance_weighted_poly_high, torch.Tensor(input_high))
+    high_poly_torch = poly_mul(
+        torch_cells.resistance_weighted_poly_high, torch.Tensor(input_high)
+    )
     print(f"high_poly_torch: {high_poly_torch}")
 
     from .synaptogen import Imix
@@ -191,8 +221,8 @@ def memristor_tests():
     correction_factors_nc = []
     for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
         cell_out = Iread(estimation_cells, check)
-        out = (cell_out[:100] - cell_out[100:])
-        out_nc = (cell_out[:100])
+        out = cell_out[:100] - cell_out[100:]
+        out_nc = cell_out[:100]
         correction_factor = check / np.mean(out - zero_offsets[i])
         correction_factor_nc = check / np.mean(out_nc - zero_offsets_nc[i])
         correction_factors.append(correction_factor)
@@ -218,8 +248,10 @@ def memristor_tests():
         estimation_cells.applyVoltage(np.asarray([u_for_05] * 100 + [0.0] * 100))
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
             cell_out = Iread(estimation_cells, 0.6)
-            out = (cell_out[:100] - cell_out[100:])
-            mean_for_readout_u = (np.mean(out) - zero_offsets[i]) * correction_factor_final
+            out = cell_out[:100] - cell_out[100:]
+            mean_for_readout_u = (
+                np.mean(out) - zero_offsets[i]
+            ) * correction_factor_final
         mean = np.mean(mean_for_readout_u)
         if mean <= 0.5:
             break
@@ -242,12 +274,14 @@ def memristor_tests():
         max_nc = np.max(outs_nc)
         min = np.min(outs)
         min_nc = np.min(outs_nc)
-        error = np.mean(outs ** 2)
-        error_nc = np.mean(outs_nc ** 2)
+        error = np.mean(outs**2)
+        error_nc = np.mean(outs_nc**2)
         print(
-            f"{test_value} * 0 (    corrected) = {result:.3} +/- {deviation:.3}, min: {min:.4}, max: {max:.4}, error: {error}")
+            f"{test_value} * 0 (    corrected) = {result:.3} +/- {deviation:.3}, min: {min:.4}, max: {max:.4}, error: {error}"
+        )
         print(
-            f"{test_value} * 0 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}")
+            f"{test_value} * 0 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}"
+        )
 
     test_cells.applyVoltage(np.asarray([-2.0] * 1000 + [0.0] * 1000))
 
@@ -258,7 +292,9 @@ def memristor_tests():
         cell_out = Iread(test_cells, test_value * 0.6)
         cell_out_torch = torch_cells.forward(torch.tensor([test_value * 0.6]))
         outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
-        outs_torch = ((cell_out_torch[:1000] - cell_out_torch[1000:]) * correction_factor_final).numpy()
+        outs_torch = (
+            (cell_out_torch[:1000] - cell_out_torch[1000:]) * correction_factor_final
+        ).numpy()
         print(f"torch vs normal: {np.std(outs_torch - outs)}")
         # Non corrected
         outs_nc = ((cell_out[:1000]) - zero_offset_nc) * correction_factor_final
@@ -275,10 +311,14 @@ def memristor_tests():
         error = np.mean((outs - test_value) ** 2)
         error_nc = np.mean((outs_nc - test_value) ** 2)
         print(
-            f"{test_value} * 1 (    corrected) = {result:.3} +/- {deviation:.3}, min: {min:.4}, max: {max:.4}, error: {error}")
-        print(f"{test_value} * 1 (tch-corrected) = {result_torch:.3} +/- {deviation_torch:.3}")
+            f"{test_value} * 1 (    corrected) = {result:.3} +/- {deviation:.3}, min: {min:.4}, max: {max:.4}, error: {error}"
+        )
         print(
-            f"{test_value} * 1 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}")
+            f"{test_value} * 1 (tch-corrected) = {result_torch:.3} +/- {deviation_torch:.3}"
+        )
+        print(
+            f"{test_value} * 1 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}"
+        )
 
     # repeat the test for the pytorch implementation
     # torch_cells = MemristorLinear(100, 20, low_degree=test_cells.params.LLRSdeg, high_degree=test_cells.params.HHRSdeg)
@@ -296,7 +336,6 @@ def memristor_tests():
     #     deviation = torch.std(outs)
     #     print(f"{test_value} * 1 = {result:.3} +/- {deviation:.3}")
 
-
     test_cells.applyVoltage(np.asarray([u_for_05] * 1000 + [0.0] * 1000))
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
@@ -305,7 +344,9 @@ def memristor_tests():
         deviation = np.std(outs)
         max = np.max(outs)
         min = np.min(outs)
-        print(f"{test_value} * 0.5 = {result:.3} +/- {deviation:.3}, min: {min}, max: {max}")
+        print(
+            f"{test_value} * 0.5 = {result:.3} +/- {deviation:.3}, min: {min}, max: {max}"
+        )
 
     test_cells.applyVoltage(np.asarray([2.0] * 2000))
     test_cells.applyVoltage(np.asarray([-0.0] * 1000 + [-2.0] * 1000))
@@ -333,8 +374,10 @@ def memristor_tests():
 
     # try to set weight to 0.5
 
+
 if __name__ == "__main__":
     from .memristor_modules import compute_correction_factor
+
     compute_correction_factor()
     # test_toy_memristor()
     memristor_tests()
