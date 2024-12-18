@@ -8,28 +8,36 @@ from .synaptogen import CellArrayCPU
 from .quant_modules import LinearQuant, ActivationQuantizer
 
 
-def poly_mul(degree: int, polynomials: torch.Tensor, inputs: torch.Tensor):
+def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements.
 
     :param degree: Degree of the polynomial
-    :param polynomials: polynomial factors of shape [P]
+    :param coefficients: polynomial coefficients of shape [P], in ascending order of degree
     :param inputs: inputs ("x") to be evaluated in the shape of [..., I]
-    :return: [...., I, 1] outputs with additional broadcast axis
+    :return: [...., I] outputs
     """
-    # initialize output with the polynomial constant and already broadcast to the desired return shape
-    broadcast_output = torch.broadcast_to(
-        polynomials[0], size=inputs.shape + (1,)
-    )  # [..., I, 1]
-    # broadcast inputs to the desired output shape
+    exponents = torch.arange(0, coefficients.shape[-1], device=inputs.device)  # P
     inputs = inputs.unsqueeze(-1)  # [..., I, 1]
-    results = []
-    for i in range(degree - 1):
-        coefficient = polynomials[i + 1]  # [1]
-        result = torch.mul(inputs ** (i + 1), coefficient)  # [...., I, 1]
-        results.append(result)
-    broadcast_output = torch.stack(results, dim=0).sum(dim=0)  # [...., I, 1]
-    return broadcast_output
+    result = coefficients * (inputs**exponents)  # [..., I, P]
+    return result.sum(dim=-1)  # [..., I]
+
+
+def poly_mul_horner(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+    """
+    Evaluate a polynomial function on all input elements using Horner's optimized method.
+
+    Not sure yet if this is faster than the naive implementation.
+
+    :param degree: Degree of the polynomial
+    :param coefficients: polynomial coefficients of shape [P], in ascending order of degree
+    :param inputs: inputs ("x") to be evaluated in the shape of [..., I]
+    :return: [...., I] outputs
+    """
+    results = torch.zeros_like(inputs, device=inputs.device)
+    for coeff in coefficients.flip(-1):  # highest order first
+        results = results * inputs + coeff
+    return results
 
 
 class MemristorArray(nn.Module):
@@ -93,16 +101,8 @@ class MemristorArray(nn.Module):
         :param inputs: [..., I]
         :return [..., I, O]
         """
-        result_low = poly_mul(
-            degree=self.low_degree,
-            polynomials=self.resistance_weighted_poly_low,
-            inputs=inputs,
-        )
-        result_high = poly_mul(
-            degree=self.high_degree,
-            polynomials=self.resistance_weighted_poly_high,
-            inputs=inputs,
-        )
+        result_low = poly_mul(self.resistance_weighted_poly_low, inputs).unsqueeze(-1)
+        result_high = poly_mul(self.resistance_weighted_poly_high, inputs).unsqueeze(-1)
         result_raw = (1 - self.r) * result_low + self.r * result_high  # [....., I, O]
         return result_raw
 
