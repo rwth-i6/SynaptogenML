@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -40,6 +41,29 @@ def poly_mul_horner(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.T
     return results
 
 
+def randn_broadcast(
+    shape: Tuple[int],
+    num_broadcast_dims: int,
+    *,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    """
+    Compute gaussian noise for all dims except the leading ``num_batch_dims`` and
+    broadcast along these.
+
+    Saves memory and computation time for large batch sizes.
+
+    :param shape: Shape of the tensor to be created, split in [...num_batch_dims, ..dims].
+    :param num_broadcast_dims: Number of batch dims across which noise is broadcast.
+    :param device: the device on which to create the tensor
+    """
+    assert len(shape) > num_broadcast_dims
+    trailing_shape = shape[num_broadcast_dims:]
+    trailing_tensor = torch.randn(trailing_shape, device=device)
+    broadcasted_tensor = trailing_tensor.expand(shape)
+    return broadcasted_tensor
+
+
 class MemristorArray(nn.Module):
     """
     Torch Module for a Memristor Array.
@@ -51,6 +75,7 @@ class MemristorArray(nn.Module):
         out_features: int,
         low_degree: int = 7,
         high_degree: int = 6,
+        broadcast_noise_dims: int = 1,
     ):
         """
 
@@ -58,6 +83,7 @@ class MemristorArray(nn.Module):
         :param out_features: output lines of the memristor (O)
         :param low_degree:
         :param high_degree:
+        :param broadcast_noise_dims: number of leading dimensions to broadcast noise over, performance optimization
         """
         super().__init__()
 
@@ -78,6 +104,8 @@ class MemristorArray(nn.Module):
         self.kBT = 1.380649e-23 * 300  # Default Constant
         self.noise_minimum_voltage = 1e-12
         self.e = np.exp(1)
+        assert broadcast_noise_dims >= 0
+        self.broadcast_noise_dims = broadcast_noise_dims
 
         self.in_features = in_features
         self.out_features = out_features
@@ -126,7 +154,9 @@ class MemristorArray(nn.Module):
         )
         shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
         sigma_total = torch.sqrt(johnson_noise + shot_noise)
-        noise = torch.randn(result_raw.shape, device=inputs.device)
+        noise = randn_broadcast(
+            result_raw.shape, self.broadcast_noise_dims, device=inputs.device
+        )
         return noise * sigma_total
 
     def forward(self, inputs: torch.Tensor):
