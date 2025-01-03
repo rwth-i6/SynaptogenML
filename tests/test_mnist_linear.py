@@ -10,13 +10,14 @@ import sys
 from torch_memristor.memristor_modules import MemristorLinear, DacAdcHardwareSettings
 from mnist_helper import create_mnist_dataloaders
 
+
 class QuantizedModel2(nn.Module):
 
     def __init__(self):
         super().__init__()
 
         self.linear_1 = LinearQuant(
-            in_features=28*28,
+            in_features=28 * 28,
             out_features=512,
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
@@ -38,7 +39,7 @@ class QuantizedModel2(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_l1_out = ActivationQuantizer(
@@ -47,7 +48,7 @@ class QuantizedModel2(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_final_in = ActivationQuantizer(
@@ -56,7 +57,7 @@ class QuantizedModel2(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_final_out = ActivationQuantizer(
@@ -65,7 +66,7 @@ class QuantizedModel2(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         hardware_settings = DacAdcHardwareSettings(
@@ -73,23 +74,23 @@ class QuantizedModel2(nn.Module):
             output_precision_bits=2,
             output_range_bits=6,
             hardware_input_vmax=0.6,
-            hardware_output_current_scaling=8020.
+            hardware_output_current_scaling=8020.0,
         )
         self.memristor_linear_1 = MemristorLinear(
-            in_features=28*28,
+            in_features=28 * 28,
             out_features=512,
             weight_precision=3,
-            converter_hardware_settings=hardware_settings
+            converter_hardware_settings=hardware_settings,
         )
         self.memristor_final = MemristorLinear(
             in_features=512,
             out_features=10,
             weight_precision=3,
-            converter_hardware_settings=hardware_settings
+            converter_hardware_settings=hardware_settings,
         )
 
     def forward(self, image, use_memristor=False):
-        inp = torch.reshape(image, shape=(-1, 28*28))
+        inp = torch.reshape(image, shape=(-1, 28 * 28))
         if use_memristor:
             linear_out = self.memristor_linear_1(inp)
         else:
@@ -103,8 +104,12 @@ class QuantizedModel2(nn.Module):
         return quant_out
 
     def prepare_memristor(self):
-        self.memristor_linear_1.init_from_linear_quant(self.activation_quant_l1_in, self.linear_1)
-        self.memristor_final.init_from_linear_quant(self.activation_quant_final_in, self.final_linear)
+        self.memristor_linear_1.init_from_linear_quant(
+            self.activation_quant_l1_in, self.linear_1
+        )
+        self.memristor_final.init_from_linear_quant(
+            self.activation_quant_final_in, self.final_linear
+        )
 
 
 def test_linear():
@@ -152,7 +157,9 @@ def test_linear():
             optimizer.step()
             optimizer.zero_grad()
 
-        print(f"train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}")
+        print(
+            f"train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
+        )
         total_ce = 0
         total_acc = 0
         num_examples = 0
@@ -171,17 +178,19 @@ def test_linear():
             total_ce += ce.detach().cpu()
             acc = torch.sum(torch.eq(torch.argmax(logits, dim=-1), labels).int())
             total_acc += acc.detach().cpu()
-            #if num_examples < 100:
+            # if num_examples < 100:
             #    print(time.time() - start_tmp)
             # print(f"CE: {ce/BATCH_SIZE:.3f}  ACC: {acc/BATCH_SIZE:.3f}")
         end_float = time.time() - start
         end_float_avg = end_float / num_examples
 
-        print(f"test ce: {total_ce / num_examples:.6f}  acc: {total_acc / num_examples:.6f} time: {end_float} per sample: {end_float_avg}")
+        print(
+            f"test ce: {total_ce / num_examples:.6f}  acc: {total_acc / num_examples:.6f} time: {end_float} per sample: {end_float_avg}"
+        )
 
         model.prepare_memristor()
         model.to(device=device)
-        
+
         print("\nstart memristor evaluation")
         start = time.time()
         for data in dataloader_test:
@@ -196,11 +205,12 @@ def test_linear():
             total_ce += ce.detach().cpu()
             acc = torch.sum(torch.eq(torch.argmax(logits, dim=-1), labels).int())
             total_acc += acc.detach().cpu()
-            #if num_examples < 100:
+            # if num_examples < 100:
             #    print(time.time() - start_tmp)
             # print(f"CE: {ce/BATCH_SIZE:.3f}  ACC: {acc/BATCH_SIZE:.3f}")
         end_float = time.time() - start
         end_float_avg = end_float / num_examples
 
-
-        print(f"test memristor ce: {total_ce / num_examples:.6f}  acc: {total_acc / num_examples:.6f} time: {end_float} per sample: {end_float_avg}")
+        print(
+            f"test memristor ce: {total_ce / num_examples:.6f}  acc: {total_acc / num_examples:.6f} time: {end_float} per sample: {end_float_avg}"
+        )
