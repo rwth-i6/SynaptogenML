@@ -1,5 +1,7 @@
 # Custom excludes
 .history.*
+# temporary MNIST files
+MNIST/
 
 # Default Python excludes
 
