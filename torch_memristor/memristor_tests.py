@@ -5,14 +5,16 @@ import torch
 from torch import nn
 
 from .synaptogen import CellArrayCPU
-from .quant_modules import LinearQuant, ActivationQuantizer
+from .quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
 from .memristor_modules import (
-    MemristorArray,
+    ActivationQuantizer,
     DacAdcHardwareSettings,
     DacAdcPair,
+    MemristorArray,
+    MemristorConv1d,
     PairedMemristorArrayV2,
-    poly_mul,
     poly_mul_horner,
+    poly_mul,
 )
 
 
@@ -21,9 +23,9 @@ def linear_quant_to_mem_tester(
     activation_quant: ActivationQuantizer,
     linear_quant: LinearQuant,
 ):
-    quant_weights = linear_quant.weight_fake_quant(linear_quant.weight)
+    quant_weights = linear_quant.weight_quantizer(linear_quant.weight)
     quant_weights_scaled = torch.torch.round(
-        quant_weights / linear_quant.weight_fake_quant.scale
+        quant_weights / linear_quant.weight_quantizer.scale
     ).to(dtype=torch.int32)
     quant_weights_scaled_transposed = torch.transpose(
         quant_weights_scaled, 0, 1
@@ -72,10 +74,10 @@ def linear_quant_to_mem_tester(
     print("adc out")
     print(torch.max(out))
     print("weight_max_scale")
-    print(linear_quant.weight_fake_quant.scale)
+    print(linear_quant.weight_quantizer.scale)
     scaled_out = (
         out
-        * linear_quant.weight_fake_quant.scale
+        * linear_quant.weight_quantizer.scale
         * activation_quant.scale
         * activation_quant.quant_max
     )
@@ -83,6 +85,66 @@ def linear_quant_to_mem_tester(
     print(torch.max(scaled_out))
 
     return scaled_out
+
+
+def conv1d_quant_to_mem_tester(
+    example_input: torch.Tensor,
+    activation_quant: ActivationQuantizer,
+    conv1d_quant: Conv1DQuant,
+):
+    hardware_settings = DacAdcHardwareSettings(
+        input_bits=8,
+        output_precision_bits=5,
+        output_range_bits=6,
+        hardware_input_vmax=0.6,
+        hardware_output_current_scaling=8020.0,
+    )
+    mem_conv = MemristorConv1d(
+        in_channels=conv1d_quant.in_channels,
+        out_channels=conv1d_quant.out_channels,
+        kernel_size=conv1d_quant.kernel_size,
+        stride=conv1d_quant.stride,
+        padding=conv1d_quant.padding,
+        groups=conv1d_quant.groups,
+        padding_mode=conv1d_quant.padding_mode,
+        converter_hardware_settings=hardware_settings,
+        weight_precision=conv1d_quant.weight_bit_prec,
+    )
+    mem_conv.init_from_conv_quant(activation_quant, conv1d_quant)
+    return mem_conv.forward(example_input)
+
+
+def test_conv1d():
+    from lovely_tensors import lovely, monkey_patch
+
+    monkey_patch()
+
+    input = torch.rand((1, 32, 5000))  # B, F, T
+    conv1d = Conv1DQuant(
+        in_channels=32,
+        out_channels=32,
+        kernel_size=3,
+        stride=1,
+        groups=32,
+        dilation=1,
+        padding="same",
+        bias=False,
+        weight_bit_prec=8,
+        weight_quant_dtype=torch.qint8,
+        weight_quant_method="per_tensor",
+    )
+    activation_quant = ActivationQuantizer(
+        bit_precision=8,
+        dtype=torch.qint8,
+        method="per_tensor",
+        channel_axis=None,
+        moving_avrg=0.01,
+    )
+    activation_quant(conv1d(input))
+    
+    input = input.transpose(1, 2)
+    val = conv1d_quant_to_mem_tester(input, activation_quant, conv1d)
+    print(f"conv1d output: {lovely(val)}")
 
 
 def test_toy_memristor():
@@ -381,3 +443,4 @@ if __name__ == "__main__":
     compute_correction_factor()
     # test_toy_memristor()
     memristor_tests()
+    test_conv1d()

@@ -1,0 +1,16 @@
+stages:
+  - test
+
+test_mnist_conv:
+  stage: test
+  image: pytorch/pytorch:2.3.0-cuda11.8-cudnn8-devel
+  script:
+    - pip install -r requirements.txt
+    - python3 -m pytest -m conv -s
+
+test_mnist_linear:
+  stage: test
+  image: pytorch/pytorch:2.3.0-cuda11.8-cudnn8-devel
+  script:
+    - pip install -r requirements.txt
+    - python3 -m pytest -m linear -s

@@ -2,27 +2,45 @@ from mnist_helper import run_training
 import pytest
 import torch
 from torch import nn
-from torch_memristor.quant_modules import ActivationQuantizer, LinearQuant
-from torch_memristor.memristor_modules import DacAdcHardwareSettings, MemristorLinear
+from torch_memristor.memristor_modules import (
+    DacAdcHardwareSettings,
+    MemristorConv1d,
+    MemristorLinear,
+)
+from torch_memristor.quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
 
 
-class LinearModel(nn.Module):
+class ConvModel(nn.Module):
 
     def __init__(self, model_dim: int = 128):
         super().__init__()
 
         assert model_dim > 0
         self.model_dim = model_dim
+
         self.linear_1 = LinearQuant(
             in_features=28 * 28,
-            out_features=self.model_dim,
+            out_features=model_dim,
+            weight_bit_prec=3,
+            weight_quant_dtype=torch.qint8,
+            weight_quant_method="per_tensor_symmetric",
+            bias=False,
+        )
+        self.conv_1 = Conv1DQuant(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=3,
+            groups=1,
+            stride=1,
+            dilation=1,
+            padding="same",
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
             weight_quant_method="per_tensor_symmetric",
             bias=False,
         )
         self.final_linear = LinearQuant(
-            in_features=self.model_dim,
+            in_features=model_dim,
             out_features=10,
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
@@ -38,8 +56,24 @@ class LinearModel(nn.Module):
             moving_avrg=None,
             reduce_range=False,
         )
-
         self.activation_quant_l1_out = ActivationQuantizer(
+            bit_precision=8,
+            dtype=torch.qint8,
+            method="per_tensor_symmetric",
+            channel_axis=None,
+            moving_avrg=None,
+            reduce_range=False,
+        )
+
+        self.activation_quant_l2_in = ActivationQuantizer(
+            bit_precision=8,
+            dtype=torch.qint8,
+            method="per_tensor_symmetric",
+            channel_axis=None,
+            moving_avrg=None,
+            reduce_range=False,
+        )
+        self.activation_quant_l2_out = ActivationQuantizer(
             bit_precision=8,
             dtype=torch.qint8,
             method="per_tensor_symmetric",
@@ -56,7 +90,6 @@ class LinearModel(nn.Module):
             moving_avrg=None,
             reduce_range=False,
         )
-
         self.activation_quant_final_out = ActivationQuantizer(
             bit_precision=8,
             dtype=torch.qint8,
@@ -75,12 +108,22 @@ class LinearModel(nn.Module):
         )
         self.memristor_linear_1 = MemristorLinear(
             in_features=28 * 28,
-            out_features=self.model_dim,
+            out_features=model_dim,
+            weight_precision=3,
+            converter_hardware_settings=hardware_settings,
+        )
+        self.memristor_conv_1 = MemristorConv1d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=3,
+            groups=1,
+            stride=1,
+            padding="same",
             weight_precision=3,
             converter_hardware_settings=hardware_settings,
         )
         self.memristor_final = MemristorLinear(
-            in_features=self.model_dim,
+            in_features=model_dim,
             out_features=10,
             weight_precision=3,
             converter_hardware_settings=hardware_settings,
@@ -92,11 +135,18 @@ class LinearModel(nn.Module):
             linear_out = self.memristor_linear_1(inp)
         else:
             linear_out = self.linear_1(self.activation_quant_l1_in(inp))
-        out1 = nn.functional.tanh(self.activation_quant_l1_out(linear_out))
+        out1 = nn.functional.tanh(self.activation_quant_l1_out(linear_out)).reshape(
+            -1, 1, self.model_dim
+        )
         if use_memristor:
-            logits = self.memristor_final(out1)
+            conv_out = self.memristor_conv_1(out1)
         else:
-            logits = self.final_linear(self.activation_quant_final_in(out1))
+            conv_out = self.conv_1(self.activation_quant_l2_in(out1))
+        out2 = nn.functional.tanh(self.activation_quant_l2_out(conv_out)).squeeze(-2)
+        if use_memristor:
+            logits = self.memristor_final(out2)
+        else:
+            logits = self.final_linear(self.activation_quant_final_in(out2))
         quant_out = self.activation_quant_final_out(logits)
         return quant_out
 
@@ -104,11 +154,14 @@ class LinearModel(nn.Module):
         self.memristor_linear_1.init_from_linear_quant(
             self.activation_quant_l1_in, self.linear_1
         )
+        self.memristor_conv_1.init_from_conv_quant(
+            self.activation_quant_l2_in, self.conv_1
+        )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in, self.final_linear
         )
 
 
-@pytest.mark.linear
-def test_linear():
-    run_training(LinearModel, expected_accuracy=0.5)
+@pytest.mark.conv
+def test_conv1d():
+    run_training(ConvModel, expected_accuracy=0.5)

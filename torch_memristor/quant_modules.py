@@ -290,11 +290,13 @@ class Conv1DQuant(nn.Module):
         self.padding_mode = padding_mode
 
         self.weight = nn.Parameter(
-            torch.empty(in_channels, out_channels // groups, kernel_size),
+            torch.empty(out_channels, in_channels // groups, kernel_size),
             requires_grad=True,
         )
         if bias:
             self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.bias = None
         init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         if self.bias is not None:
             fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
