@@ -19,3 +19,9 @@ test_mnist_linear:
   script:
     - pip3 install -r requirements.txt
     - python3 -m pytest -m linear -s
+
+test_mnist_tiled_linear:
+  <<: *job_template
+  script:
+    - pip3 install -r requirements.txt
+    - python3 -m pytest -m tiled_linear -s
