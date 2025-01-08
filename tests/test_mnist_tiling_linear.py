@@ -5,15 +5,18 @@ from torch import nn
 from torch_memristor.quant_modules import LinearQuant, ActivationQuantizer
 
 
-from torch_memristor.memristor_modules import TiledMemristorLinear, DacAdcHardwareSettings
+from torch_memristor.memristor_modules import (
+    TiledMemristorLinear,
+    DacAdcHardwareSettings,
+)
+
 
 class TilingLinearModel(nn.Module):
-
     def __init__(self):
         super().__init__()
 
         self.linear_1 = LinearQuant(
-            in_features=28*28,
+            in_features=28 * 28,
             out_features=512,
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
@@ -35,7 +38,7 @@ class TilingLinearModel(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_l1_out = ActivationQuantizer(
@@ -44,7 +47,7 @@ class TilingLinearModel(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_final_in = ActivationQuantizer(
@@ -53,7 +56,7 @@ class TilingLinearModel(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         self.activation_quant_final_out = ActivationQuantizer(
@@ -62,7 +65,7 @@ class TilingLinearModel(nn.Module):
             method="per_tensor_symmetric",
             channel_axis=None,
             moving_avrg=None,
-            reduce_range=False
+            reduce_range=False,
         )
 
         hardware_settings = DacAdcHardwareSettings(
@@ -70,10 +73,10 @@ class TilingLinearModel(nn.Module):
             output_precision_bits=2,
             output_range_bits=3,
             hardware_input_vmax=0.6,
-            hardware_output_current_scaling=8020.
+            hardware_output_current_scaling=8020.0,
         )
         self.memristor_linear_1 = TiledMemristorLinear(
-            in_features=28*28,
+            in_features=28 * 28,
             out_features=512,
             weight_precision=3,
             converter_hardware_settings=hardware_settings,
@@ -90,7 +93,7 @@ class TilingLinearModel(nn.Module):
         )
 
     def forward(self, image, use_memristor=False):
-        inp = torch.reshape(image, shape=(-1, 28*28))
+        inp = torch.reshape(image, shape=(-1, 28 * 28))
         if use_memristor:
             linear_out = self.memristor_linear_1(inp)
         else:
@@ -104,11 +107,14 @@ class TilingLinearModel(nn.Module):
         return quant_out
 
     def prepare_memristor(self):
-        self.memristor_linear_1.init_from_linear_quant(self.activation_quant_l1_in, self.linear_1)
-        self.memristor_final.init_from_linear_quant(self.activation_quant_final_in, self.final_linear)
+        self.memristor_linear_1.init_from_linear_quant(
+            self.activation_quant_l1_in, self.linear_1
+        )
+        self.memristor_final.init_from_linear_quant(
+            self.activation_quant_final_in, self.final_linear
+        )
 
 
 @pytest.mark.linear
 def test_linear():
     run_training(TilingLinearModel, expected_accuracy=0.5)
-

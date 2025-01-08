@@ -407,10 +407,12 @@ class TiledMemristorLinear(nn.Module):
             )  # [out, in] -> [in, out]
 
             fill_input = (
-                self.input_tiling * self.memristor_inputs- quant_weights_scaled_transposed.size(0)
+                self.input_tiling * self.memristor_inputs
+                - quant_weights_scaled_transposed.size(0)
             )
             fill_output = (
-                self.output_tiling * self.memristor_outputs - quant_weights_scaled_transposed.size(1)
+                self.output_tiling * self.memristor_outputs
+                - quant_weights_scaled_transposed.size(1)
             )
             quant_weights_scaled_transposed_pad = nn.functional.pad(
                 input=quant_weights_scaled_transposed,
@@ -459,26 +461,30 @@ class TiledMemristorLinear(nn.Module):
     def forward(self, inputs: torch.Tensor):
         assert self.initialized
         inp = self.converter.dac(inputs * self.input_factor)
-        fill_input = (
-                self.input_tiling * self.memristor_inputs - inp.size(-1)
-        )
+        fill_input = self.input_tiling * self.memristor_inputs - inp.size(-1)
         inp = nn.functional.pad(inp, (0, fill_input))
-        mem_out = torch.zeros(inputs.shape[:-1] + (self.out_features,), device=inp.device)
+        mem_out = torch.zeros(
+            inputs.shape[:-1] + (self.out_features,), device=inp.device
+        )
         for i, bit in enumerate(reversed(range(1, self.weight_precision))):
             inputs = []
             for j in range(self.input_tiling):
-                input_slice = inp[..., j*self.memristor_inputs:(j+1)*self.memristor_inputs]
-                start_index = self.get_memristor_index(i, j,0)
+                input_slice = inp[
+                    ..., j * self.memristor_inputs : (j + 1) * self.memristor_inputs
+                ]
+                start_index = self.get_memristor_index(i, j, 0)
                 outputs = torch.concatenate(
                     [
                         self.converter.adc(
-                            self.memristors[start_index + k].forward(input_slice)) for k in range(self.output_tiling)
+                            self.memristors[start_index + k].forward(input_slice)
+                        )
+                        for k in range(self.output_tiling)
                     ],
-                    dim = -1
+                    dim=-1,
                 )  # [mem_in, pad_out]
 
                 # discard the padding in the last axis
-                outputs = outputs[..., :self.out_features]
+                outputs = outputs[..., : self.out_features]
                 inputs.append(outputs)
             mem_sum = torch.sum(torch.stack(inputs, dim=0), dim=0)
             mem_out += mem_sum * (2**bit)
