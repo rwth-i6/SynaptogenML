@@ -12,7 +12,7 @@ from torch_memristor.quant_modules import ActivationQuantizer, Conv1DQuant, Line
 
 class ConvModel(nn.Module):
 
-    def __init__(self, model_dim: int = 128):
+    def __init__(self, model_dim: int = 512):
         super().__init__()
 
         assert model_dim > 0
