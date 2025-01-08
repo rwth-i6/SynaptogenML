@@ -1,13 +1,14 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal, Optional, Sequence, Tuple, Union
 
 import numpy
 import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 
+from .quant_modules import Conv1DQuant, LinearQuant, ActivationQuantizer
 from .synaptogen import CellArrayCPU
-from .quant_modules import LinearQuant, ActivationQuantizer
 
 
 def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
@@ -49,12 +50,12 @@ def randn_broadcast(
     device: Optional[torch.device] = None,
 ) -> torch.Tensor:
     """
-    Compute gaussian noise for all dims except the leading ``num_batch_dims`` and
+    Compute gaussian noise for all dims except the leading ``num_broadcast_dims`` and
     broadcast along these.
 
     Saves memory and computation time for large batch sizes.
 
-    :param shape: Shape of the tensor to be created, split in [...num_batch_dims, ..dims].
+    :param shape: Shape of the tensor to be created, split in [...num_broadcast_dims, ..dims].
     :param num_broadcast_dims: Number of batch dims across which noise is broadcast.
     :param device: the device on which to create the tensor
     """
@@ -76,14 +77,16 @@ class MemristorArray(nn.Module):
         out_features: int,
         low_degree: int = 7,
         high_degree: int = 6,
+        *,
+        additional_axes: Sequence[int] = (),
         broadcast_noise_dims: int = 1,
     ):
         """
-
         :param in_features: input lines of the memristor (I)
         :param out_features: output lines of the memristor (O)
         :param low_degree:
         :param high_degree:
+        :param additional_axes: additional batch axes
         :param broadcast_noise_dims: number of leading dimensions to broadcast noise over, performance optimization
         """
         super().__init__()
@@ -96,8 +99,10 @@ class MemristorArray(nn.Module):
             torch.empty((high_degree,)), requires_grad=False
         )
         self.r = nn.Parameter(
-            torch.empty((out_features, in_features)), requires_grad=False
+            torch.empty(additional_axes + (in_features, out_features)),  # input major
+            requires_grad=False,
         )
+        self.num_additional_axes = len(additional_axes)
         self.low_degree = low_degree
         self.high_degree = high_degree
 
@@ -123,7 +128,7 @@ class MemristorArray(nn.Module):
 
     def init_from_cell_array_input_major(self, cells: CellArrayCPU):
         self.init_resistance_states(cells)
-        self.r.data = torch.Tensor(cells.r).resize(self.in_features, self.out_features)
+        self.r.data = torch.Tensor(cells.r).resize(*self.r.shape)
 
     def compute_raw_output(self, inputs: torch.Tensor) -> torch.Tensor:
         """
@@ -132,7 +137,9 @@ class MemristorArray(nn.Module):
         """
         result_low = poly_mul(self.resistance_weighted_poly_low, inputs).unsqueeze(-1)
         result_high = poly_mul(self.resistance_weighted_poly_high, inputs).unsqueeze(-1)
-        result_raw = (1 - self.r) * result_low + self.r * result_high  # [....., I, O]
+        result_raw = (
+            result_low * (1 - self.r) + result_high * self.r
+        )  # [..., ...A, I, O]
         return result_raw
 
     def compute_noise(
@@ -140,7 +147,7 @@ class MemristorArray(nn.Module):
     ) -> torch.Tensor:
         """
 
-        :param result_raw: [..., I, O]
+        :param result_raw: [..., ...A, I, O]
         :param inputs: [..., I]
         :return:
         """
@@ -161,56 +168,38 @@ class MemristorArray(nn.Module):
         return noise * sigma_total
 
     def forward(self, inputs: torch.Tensor):
-        result_raw = self.compute_raw_output(inputs)
+        """
+        :param inputs: [...B, I]
+        :return: [...B, ...A, O]
+        """
 
+        result_raw = self.compute_raw_output(inputs)
         noise = self.compute_noise(result_raw, inputs)
         result_noised = result_raw + noise
 
         return torch.sum(
             result_noised, dim=-2
-        )  # [..., I, O] -> sum reduce I -> [..., O]
+        )  # [...B, ...A, I, O] -> sum reduce I -> [...B, ...A, O]
 
 
-class PairedMemristorArrayV2(MemristorArray):
+class PairedMemristorArrayV2(nn.Module):
     """
     TorchModule for a Memristor array with pairwise subtracted bitlines
     """
 
-    def init_from_cell_array_input_major(self, cells: CellArrayCPU):
-        raise NotImplementedError
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.pos = MemristorArray(*args, **kwargs)
+        self.neg = MemristorArray(*args, **kwargs)
 
     def init_from_paired_cell_array_input_major(
         self, positive_cells: CellArrayCPU, negative_cells: CellArrayCPU
     ):
-        self.init_resistance_states(positive_cells)
-
-        positive_r = torch.Tensor(positive_cells.r).resize(
-            self.in_features, self.out_features
-        )
-        negative_r = torch.Tensor(negative_cells.r).resize(
-            self.in_features, self.out_features
-        )
-        self.r.data = torch.concat([positive_r, negative_r], dim=-1)  # [I, 2 * O]
+        self.pos.init_from_cell_array_input_major(positive_cells)
+        self.neg.init_from_cell_array_input_major(negative_cells)
 
     def forward(self, inputs: torch.Tensor):
-        result_raw = self.compute_raw_output(inputs)
-
-        # compute gaussian noises
-        noise = self.compute_noise(result_raw, inputs)
-
-        # Apply noise
-        result_noised = result_raw + noise
-
-        # Sum the output lines
-        line_summed = torch.sum(result_noised, dim=-2)  # [...., 2*O]
-
-        # Perform the subtraction of positive and negative lines
-        shape = line_summed.shape
-        axis_extended = torch.reshape(line_summed, shape[:-1] + (2, -1))  # [...., 2, O]
-        intermediate = torch.moveaxis(axis_extended, -2, 0)  # [2, ...., O]
-        result_noised_paired = intermediate[0] - intermediate[1]  # [...., O]
-
-        return result_noised_paired
+        return self.pos.forward(inputs) - self.neg.forward(inputs)
 
 
 @dataclass
@@ -351,6 +340,168 @@ class MemristorLinear(nn.Module):
             mem_out += self.converter.adc(self.memristors[i].forward(inp)) * (2**bit)
         out = mem_out * self.output_factor
         return out
+
+
+class MemristorConv1d(nn.Module):
+    """
+    Memristive 1d-convolution as required for the implementation of a Conformer block.
+
+    Does not have a bias built in.
+    """
+
+    def __init__(
+        self,
+        *,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int,
+        padding: Union[int, Literal["same", "valid"]] = 0,
+        padding_mode: Literal["zeros", "reflect", "replicate", "circular"] = "zeros",
+        groups: int,
+        weight_precision: int,
+        converter_hardware_settings: DacAdcHardwareSettings,
+    ):
+        super().__init__()
+
+        assert in_channels > 0
+        self.in_channels = in_channels
+        assert out_channels > 0
+        self.out_channels = out_channels
+        assert groups > 0
+        assert in_channels % groups == 0
+        self.groups = groups
+        assert kernel_size > 0
+        self.kernel_size = kernel_size
+        if isinstance(padding, int):
+            assert padding >= 0
+        else:
+            assert padding in ["same", "valid"]
+        self.padding = padding
+        assert padding_mode in ["zeros", "reflect", "replicate", "circular"]
+        self.padding_mode = padding_mode
+        assert stride > 0
+        self.stride = stride
+
+        self.memristors = torch.nn.ModuleList(
+            [
+                PairedMemristorArrayV2(
+                    in_features=kernel_size,
+                    out_features=1,
+                    additional_axes=(
+                        groups,
+                        out_channels // groups,
+                        in_channels // groups,
+                    ),
+                )
+                for _ in range(weight_precision - 1)
+            ]
+        )
+
+        self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
+        assert weight_precision > 0
+        self.weight_precision = weight_precision
+
+        self.input_factor = 1.0
+        self.output_factor = 1.0
+
+        self.initialized = False
+
+    def init_from_conv_quant(
+        self, activation_quant: ActivationQuantizer, conv_quant: Conv1DQuant
+    ):
+        quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach()
+
+        # handle weight sign separately because integer division with negative numbers does not work as expected
+        # for this case here, e.g. -5 // 2 = -3 instead of -2
+        weights_sign = torch.sign(quant_weights)
+        quant_weights_scaled_abs = torch.round(
+            torch.absolute(quant_weights / conv_quant.weight_quantizer.scale)
+        ).to(dtype=torch.int32)
+
+        for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
+            # the weights we want to apply
+            quant_weights_scaled_bit = quant_weights_scaled_abs // (2**bit)
+
+            # the residual weights for the next step
+            quant_weights_scaled_abs = quant_weights_scaled_abs % (2**bit)
+
+            # re-apply sign and transpose
+            quant_weights_scaled_transposed = torch.transpose(
+                quant_weights_scaled_bit * weights_sign, 0, 1
+            )  # [out, in] -> [in, out]
+
+            # Arrays need flat input
+            flat = torch.flatten(quant_weights_scaled_transposed).cpu()
+
+            # positive numbers go in the positive line array, negative numbers as positive weight in the negative array
+            positive_weights = torch.clamp(flat, 0, 1).numpy()
+            negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
+
+            # apply negative voltage where a weight is set
+            size = flat.shape[0]
+            positive_cells = CellArrayCPU(size)
+            negative_cells = CellArrayCPU(size)
+            positive_cells.applyVoltage(positive_weights * -2.0)
+            negative_cells.applyVoltage(negative_weights * -2.0)
+
+            self.memristors[i].init_from_paired_cell_array_input_major(
+                positive_cells, negative_cells
+            )
+
+        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
+        self.output_factor = (
+            conv_quant.weight_quantizer.scale
+            * activation_quant.scale
+            * activation_quant.quant_max
+        )
+        self.initialized = True
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Applies 1d-convolution.
+
+        :param inputs: [..., F, T]
+        :return: [..., F', T']
+        """
+
+        assert self.initialized
+
+        in_ndim = inputs.ndim
+        inputs = self.converter.dac(inputs * self.input_factor)
+        inputs = inputs.transpose(-2, -1)  # [..., T, F]
+
+        if isinstance(self.padding, int):
+            padding_amount = self.padding
+        elif self.padding == "same":
+            padding_amount = self.kernel_size // 2
+        elif self.padding == "valid":
+            padding_amount = 0
+        else:
+            raise ValueError(f"Unknown padding mode: {self.padding}")
+        if padding_amount > 0:
+            mode = "constant" if self.padding_mode == "zeros" else self.padding_mode
+            inputs = F.pad(inputs, (0, 0, padding_amount, padding_amount), mode=mode)
+
+        in0 = inputs
+        in1 = in0.unfold(-2, self.kernel_size, self.stride)  # [..., T', F, C]
+        in2 = in1.view(
+            *in1.shape[:-2], self.groups, -1, self.kernel_size
+        )  # [..., T', G, F//G, C]
+        in3 = in2.unsqueeze(-2)  # [..., T', G, F//G, 1, C]
+        in4 = in3.expand(
+            *([-1] * (in3.ndim - 2)), self.out_channels // self.groups, -1
+        )  # [..., T', G, F//G, O//G, C]
+
+        mem_out = self.converter.adc(
+            self.memristors[-1].forward(in4)
+        )  # [..., T', G, F//G, O//G, 1]
+        for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
+            mem_out += self.converter.adc(self.memristors[i].forward(in4)) * (2**bit)
+        mem_out *= self.output_factor
+
+        result = mem_out.reshape(*mem_out.shape[: in_ndim - 1], -1)  # [..., T', O]
+        return result.transpose(-2, -1)  # [..., O, T']
 
 
 def compute_correction_factor():
