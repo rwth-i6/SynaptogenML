@@ -487,7 +487,7 @@ class TiledMemristorLinear(nn.Module):
                 outputs = outputs[..., : self.out_features]
                 inputs.append(outputs)
             mem_sum = torch.sum(torch.stack(inputs, dim=0), dim=0)
-            mem_out += mem_sum * (2**bit)
+            mem_out += mem_sum * (2**(bit-1))
         out = mem_out * self.output_factor
         return out
 
