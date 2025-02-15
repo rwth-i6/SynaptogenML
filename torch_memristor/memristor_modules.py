@@ -384,7 +384,10 @@ class TiledMemristorLinear(nn.Module):
         )
 
     def init_from_linear_quant(
-        self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant
+        self,
+        activation_quant: ActivationQuantizer,
+        linear_quant: LinearQuant,
+        num_cycles: int,
     ):
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
         # handle weight sign separately because integer division with negative numbers does not work as expected
@@ -441,6 +444,14 @@ class TiledMemristorLinear(nn.Module):
                     size = flat.shape[0]
                     positive_cells = CellArrayCPU(size)
                     negative_cells = CellArrayCPU(size)
+                    for x in range(num_cycles * 50):
+                        positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
+                        negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
+                        if x % 150 == 0:
+                            print(x)
+
+                    positive_cells.applyVoltage(2.0)
+                    negative_cells.applyVoltage(2.0)
                     positive_cells.applyVoltage(positive_weights * -2.0)
                     negative_cells.applyVoltage(negative_weights * -2.0)
 
@@ -487,7 +498,7 @@ class TiledMemristorLinear(nn.Module):
                 outputs = outputs[..., : self.out_features]
                 inputs.append(outputs)
             mem_sum = torch.sum(torch.stack(inputs, dim=0), dim=0)
-            mem_out += mem_sum * (2**(bit-1))
+            mem_out += mem_sum * (2 ** (bit - 1))
         out = mem_out * self.output_factor
         return out
 
@@ -558,7 +569,10 @@ class MemristorConv1d(nn.Module):
         self.initialized = False
 
     def init_from_conv_quant(
-        self, activation_quant: ActivationQuantizer, conv_quant: Conv1DQuant
+        self,
+        activation_quant: ActivationQuantizer,
+        conv_quant: Conv1DQuant,
+        num_cycles: int,
     ):
         quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach()
 
@@ -592,6 +606,12 @@ class MemristorConv1d(nn.Module):
             size = flat.shape[0]
             positive_cells = CellArrayCPU(size)
             negative_cells = CellArrayCPU(size)
+            for x in range(num_cycles * 50):
+                positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
+                negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
+                if x % 150 == 0:
+                    print(x)
+
             positive_cells.applyVoltage(positive_weights * -2.0)
             negative_cells.applyVoltage(negative_weights * -2.0)
 
