@@ -282,11 +282,13 @@ class MemristorLinear(nn.Module):
         self.output_factor = 1.0
 
         self.initialized = False
+        self.linear_bias = None
 
     def init_from_linear_quant(
         self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant
     ):
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
+        self.linear_bias = linear_quant.bias
         # handle weight sign separately because integer division with negative numbers does not work as expected
         # for this case here, e.g. -5 // 2 = -3 instead of -2
         weights_sign = torch.sign(quant_weights)
@@ -339,6 +341,7 @@ class MemristorLinear(nn.Module):
         for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
             mem_out += self.converter.adc(self.memristors[i].forward(inp)) * (2**bit)
         out = mem_out * self.output_factor
+        out = out + self.linear_bias
         return out
 
 
@@ -375,6 +378,7 @@ class TiledMemristorLinear(nn.Module):
         self.output_factor = 1.0
 
         self.initialized = False
+        self.bias = None
 
     def get_memristor_index(self, bit_level_index, input_index, output_index):
         return (
@@ -390,6 +394,7 @@ class TiledMemristorLinear(nn.Module):
         num_cycles: int,
     ):
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
+        self.bias = linear_quant.bias
         # handle weight sign separately because integer division with negative numbers does not work as expected
         # for this case here, e.g. -5 // 2 = -3 instead of -2
         weights_sign = torch.sign(quant_weights)
@@ -447,7 +452,7 @@ class TiledMemristorLinear(nn.Module):
                     for x in range(num_cycles * 50):
                         positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
                         negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
-                        if x % 150 == 0:
+                        if x % 150 == 0 and x > 0:
                             print(x)
 
                     positive_cells.applyVoltage(2.0)
@@ -500,6 +505,7 @@ class TiledMemristorLinear(nn.Module):
             mem_sum = torch.sum(torch.stack(inputs, dim=0), dim=0)
             mem_out += mem_sum * (2 ** (bit - 1))
         out = mem_out * self.output_factor
+        out = out + self.bias
         return out
 
 
@@ -567,6 +573,7 @@ class MemristorConv1d(nn.Module):
         self.output_factor = 1.0
 
         self.initialized = False
+        self.bias = None
 
     def init_from_conv_quant(
         self,
@@ -575,6 +582,7 @@ class MemristorConv1d(nn.Module):
         num_cycles: int,
     ):
         quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach()
+        self.bias = conv_quant.bias
 
         # handle weight sign separately because integer division with negative numbers does not work as expected
         # for this case here, e.g. -5 // 2 = -3 instead of -2
@@ -609,7 +617,7 @@ class MemristorConv1d(nn.Module):
             for x in range(num_cycles * 50):
                 positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
                 negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
-                if x % 150 == 0:
+                if x % 150 == 0 and x > 0:
                     print(x)
 
             positive_cells.applyVoltage(positive_weights * -2.0)
@@ -640,7 +648,6 @@ class MemristorConv1d(nn.Module):
         in_ndim = inputs.ndim
         inputs = self.converter.dac(inputs * self.input_factor)
         inputs = inputs.transpose(-2, -1)  # [..., T, F]
-
         if isinstance(self.padding, int):
             padding_amount = self.padding
         elif self.padding == "same":
@@ -652,6 +659,7 @@ class MemristorConv1d(nn.Module):
         if padding_amount > 0:
             mode = "constant" if self.padding_mode == "zeros" else self.padding_mode
             inputs = F.pad(inputs, (0, 0, padding_amount, padding_amount), mode=mode)
+
 
         in0 = inputs
         in1 = in0.unfold(-2, self.kernel_size, self.stride)  # [..., T', F, C]
@@ -671,6 +679,7 @@ class MemristorConv1d(nn.Module):
         mem_out *= self.output_factor
 
         result = mem_out.reshape(*mem_out.shape[: in_ndim - 1], -1)  # [..., T', O]
+        result = result + self.bias
         return result.transpose(-2, -1)  # [..., O, T']
 
 
