@@ -12,24 +12,24 @@ from torch_memristor.memristor_modules import (
 
 
 class TilingLinearModel(nn.Module):
-    def __init__(self):
+    def __init__(self, model_dim = 512, num_cycles: int = 0):
         super().__init__()
-
+        self.num_cycles = num_cycles
         self.linear_1 = LinearQuant(
             in_features=28 * 28,
-            out_features=512,
+            out_features=model_dim,
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
             weight_quant_method="per_tensor_symmetric",
-            bias=False,
+            bias=True,
         )
         self.final_linear = LinearQuant(
-            in_features=512,
+            in_features=model_dim,
             out_features=10,
             weight_bit_prec=3,
             weight_quant_dtype=torch.qint8,
             weight_quant_method="per_tensor_symmetric",
-            bias=False,
+            bias=True,
         )
 
         self.activation_quant_l1_in = ActivationQuantizer(
@@ -77,14 +77,14 @@ class TilingLinearModel(nn.Module):
         )
         self.memristor_linear_1 = TiledMemristorLinear(
             in_features=28 * 28,
-            out_features=512,
+            out_features=model_dim,
             weight_precision=3,
             converter_hardware_settings=hardware_settings,
             memristor_inputs=128,
             memristor_outputs=128,
         )
         self.memristor_final = TiledMemristorLinear(
-            in_features=512,
+            in_features=model_dim,
             out_features=10,
             weight_precision=3,
             converter_hardware_settings=hardware_settings,
@@ -108,13 +108,19 @@ class TilingLinearModel(nn.Module):
 
     def prepare_memristor(self):
         self.memristor_linear_1.init_from_linear_quant(
-            self.activation_quant_l1_in, self.linear_1
+            self.activation_quant_l1_in, self.linear_1, num_cycles=self.num_cycles
         )
         self.memristor_final.init_from_linear_quant(
-            self.activation_quant_final_in, self.final_linear
+            self.activation_quant_final_in, self.final_linear, num_cycles=self.num_cycles
         )
 
 
 @pytest.mark.tiled_linear
 def test_linear():
-    run_training(TilingLinearModel, expected_accuracy=0.5)
+    print("Num Cycle = 0")
+    run_training(TilingLinearModel, expected_accuracy=0.5, batch_size=100, num_cycles=0, num_epochs=1)
+    print("Num Cycle = 1")
+    run_training(TilingLinearModel, expected_accuracy=0.4, batch_size=100, num_cycles=1, num_epochs=1)
+    for x in range(1, 11):
+        print(f"Num Cycle = {x * 10}")
+        run_training(TilingLinearModel, expected_accuracy=0.4, batch_size=100, num_cycles=x * 10, num_epochs=1)
