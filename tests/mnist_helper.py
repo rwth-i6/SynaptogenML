@@ -29,7 +29,7 @@ def create_mnist_dataloaders(batch_size):
     return dataloader_train, dataloader_test
 
 
-def run_training(model: Type[nn.Module], expected_accuracy: float):
+def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: int = 10, num_cycles: int = 0, num_epochs: int = 5):
     from lovely_tensors import monkey_patch
 
     monkey_patch()
@@ -41,12 +41,12 @@ def run_training(model: Type[nn.Module], expected_accuracy: float):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("device: %s" % device)
 
-    BATCH_SIZE = 10
-    NUM_EPOCHS = 1 if os.getenv("CI") and device != "cuda" else 5
+    BATCH_SIZE = batch_size
+    NUM_EPOCHS = 1 if os.getenv("CI") and device != "cuda" else num_epochs
 
     dataloader_train, dataloader_test = create_mnist_dataloaders(BATCH_SIZE)
 
-    model = model()
+    model = model(num_cycles=num_cycles)
     model.to(device=device)
     optimizer = torch.optim.RAdam(lr=1e-4, params=model.parameters())
 
@@ -54,7 +54,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float):
 
     # do a train step
     for i in range(NUM_EPOCHS):
-        print("\nstart train epoch %i" % i)
+        #print("\nstart train epoch %i" % i)
         total_ce = 0
         total_acc = 0
         num_examples = 0
@@ -87,7 +87,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float):
         total_acc = 0
         num_examples = 0
         model.eval()
-        print("\nstart normal-quant evaluation")
+        #print("\nstart normal-quant evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
@@ -108,13 +108,13 @@ def run_training(model: Type[nn.Module], expected_accuracy: float):
         end_float_avg = end_float / num_examples
 
         print(
-            f"test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
         model.prepare_memristor()
         model.to(device=device)
 
-        print("\nstart memristor evaluation")
+        #print("\nstart memristor evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
