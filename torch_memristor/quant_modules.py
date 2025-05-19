@@ -277,7 +277,7 @@ class Conv1DQuant(nn.Module):
         padding: Union[str, int],
         dilation: int,
         groups: int,
-        padding_mode: str = "zeros",  # TODO: refine this type
+        padding_mode: str = "zeros",
     ):
         super().__init__()
         self.in_channels = in_channels

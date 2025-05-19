@@ -15,7 +15,6 @@ def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements.
 
-    :param degree: Degree of the polynomial
     :param coefficients: polynomial coefficients of shape [P], in ascending order of degree
     :param inputs: inputs ("x") to be evaluated in the shape of [..., I]
     :return: [...., I] outputs
@@ -30,9 +29,6 @@ def poly_mul_horner(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.T
     """
     Evaluate a polynomial function on all input elements using Horner's optimized method.
 
-    Not sure yet if this is faster than the naive implementation.
-
-    :param degree: Degree of the polynomial
     :param coefficients: polynomial coefficients of shape [P], in ascending order of degree
     :param inputs: inputs ("x") to be evaluated in the shape of [..., I]
     :return: [...., I] outputs
@@ -239,7 +235,7 @@ class DacAdcPair(nn.Module):
             quant_min=self.hs.dac_min,
             quant_max=self.hs.dac_max,
         )
-        # TODO: DAC Noise
+
         # * self.HARDWARE_VMAX -> convert to physical voltage
         input_voltage = int_quantized_input * self.hs.hardware_input_vmax
         return input_voltage
@@ -449,7 +445,7 @@ class TiledMemristorLinear(nn.Module):
                     size = flat.shape[0]
                     positive_cells = CellArrayCPU(size)
                     negative_cells = CellArrayCPU(size)
-                    for x in range(num_cycles * 50):
+                    for _ in range(num_cycles * 50):
                         positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
                         negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
 
@@ -511,7 +507,6 @@ class MemristorConv1d(nn.Module):
     """
     Memristive 1d-convolution as required for the implementation of a Conformer block.
 
-    Does not have a bias built in.
     """
 
     def __init__(
@@ -612,7 +607,7 @@ class MemristorConv1d(nn.Module):
             size = flat.shape[0]
             positive_cells = CellArrayCPU(size)
             negative_cells = CellArrayCPU(size)
-            for x in range(num_cycles * 50):
+            for _ in range(num_cycles * 50):
                 positive_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
                 negative_cells.applyVoltage(numpy.random.uniform(-2.0, 2.0))
 
