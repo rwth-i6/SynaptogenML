@@ -320,14 +320,14 @@ def memristor_tests():
 
     print(u_for_05)
 
-    test_values = np.asarray([1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125])
-    test_cells = CellArrayCPU(2000)
+    test_values = np.asarray([1.0, 0.1, 0.01])
+    test_cells = CellArrayCPU(10000)
     for test_value in test_values:
         # multiply with 0
         cell_out = Iread(test_cells, test_value * 0.6)
-        outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
+        outs = (cell_out[:5000] - cell_out[5000:]) * correction_factor_final
         # Non corrected
-        outs_nc = ((cell_out[:1000]) - zero_offset_nc) * correction_factor_nc_final
+        outs_nc = ((cell_out[:5000]) - zero_offset_nc) * correction_factor_nc_final
         result = np.mean(outs)
         result_nc = np.mean(outs_nc)
         deviation = np.std(outs)
@@ -345,21 +345,21 @@ def memristor_tests():
             f"{test_value} * 0 (non-corrected) = {result_nc:.3} +/- {deviation_nc:.3}, min: {min_nc:.4}, max: {max_nc:.4}, error: {error_nc}"
         )
 
-    test_cells.applyVoltage(np.asarray([-2.0] * 1000 + [0.0] * 1000))
+    test_cells.applyVoltage(np.asarray([-2.0] * 5000 + [0.0] * 5000))
 
-    torch_cells = MemristorArray(1, 2000)
+    torch_cells = MemristorArray(1, 10000)
     torch_cells.init_from_cell_array_input_major(test_cells)
 
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
         cell_out_torch = torch_cells.forward(torch.tensor([test_value * 0.6]))
-        outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
+        outs = (cell_out[:5000] - cell_out[5000:]) * correction_factor_final
         outs_torch = (
-            (cell_out_torch[:1000] - cell_out_torch[1000:]) * correction_factor_final
+            (cell_out_torch[:5000] - cell_out_torch[5000:]) * correction_factor_final
         ).numpy()
         print(f"torch vs normal: {np.std(outs_torch - outs)}")
         # Non corrected
-        outs_nc = ((cell_out[:1000]) - zero_offset_nc) * correction_factor_final
+        outs_nc = ((cell_out[:5000]) - zero_offset_nc) * correction_factor_final
         result = np.mean(outs)
         result_nc = np.mean(outs_nc)
         result_torch = np.mean(outs_torch)
@@ -373,7 +373,7 @@ def memristor_tests():
         error = np.mean((outs - test_value) ** 2)
         error_nc = np.mean((outs_nc - test_value) ** 2)
         print(
-            f"{test_value} * 1 (    corrected) = {result:.3} +/- {deviation:.3}, min: {min:.4}, max: {max:.4}, error: {error}"
+            f"{test_value} * 1 (    corrected) = {result:.4} +/- {deviation:.4}, min: {min:.4}, max: {max:.4}, error: {error}"
         )
         print(
             f"{test_value} * 1 (tch-corrected) = {result_torch:.3} +/- {deviation_torch:.3}"
@@ -398,23 +398,23 @@ def memristor_tests():
     #     deviation = torch.std(outs)
     #     print(f"{test_value} * 1 = {result:.3} +/- {deviation:.3}")
 
-    test_cells.applyVoltage(np.asarray([u_for_05] * 1000 + [0.0] * 1000))
+    test_cells.applyVoltage(np.asarray([u_for_05] * 5000 + [0.0] * 5000))
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
-        outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
+        outs = (cell_out[:5000] - cell_out[5000:]) * correction_factor_final
         result = np.mean(outs)
         deviation = np.std(outs)
         max = np.max(outs)
         min = np.min(outs)
         print(
-            f"{test_value} * 0.5 = {result:.3} +/- {deviation:.3}, min: {min}, max: {max}"
+            f"{test_value} * 0.5 = {result:.4} +/- {deviation:.4}, min: {min}, max: {max}"
         )
 
-    test_cells.applyVoltage(np.asarray([2.0] * 2000))
-    test_cells.applyVoltage(np.asarray([-0.0] * 1000 + [-2.0] * 1000))
+    test_cells.applyVoltage(np.asarray([2.0] * 10000))
+    test_cells.applyVoltage(np.asarray([-0.0] * 5000 + [-2.0] * 5000))
     for test_value in test_values:
         cell_out = Iread(test_cells, test_value * 0.6)
-        outs = (cell_out[:1000] - cell_out[1000:]) * correction_factor_final
+        outs = (cell_out[:5000] - cell_out[5000:]) * correction_factor_final
         result = np.mean(outs)
         deviation = np.std(outs)
         print(f"{test_value} * -1.0 = {result:.3} +/- {deviation:.3}")
