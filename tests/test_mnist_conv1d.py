@@ -2,12 +2,12 @@ from mnist_helper import run_training
 import pytest
 import torch
 from torch import nn
-from torch_memristor.memristor_modules import (
+from synatptogen_ml.memristor_modules import (
     DacAdcHardwareSettings,
     MemristorConv1d,
     TiledMemristorLinear,
 )
-from torch_memristor.quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
+from synaptogen_ml.quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
 
 
 class ConvModel(nn.Module):

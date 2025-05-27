@@ -2,10 +2,10 @@ from mnist_helper import run_training
 import pytest
 import torch
 from torch import nn
-from torch_memristor.quant_modules import LinearQuant, ActivationQuantizer
+from synaptogen_ml.quant_modules import LinearQuant, ActivationQuantizer
 
 
-from torch_memristor.memristor_modules import (
+from synaptogen_ml.memristor_modules import (
     TiledMemristorLinear,
     DacAdcHardwareSettings,
 )

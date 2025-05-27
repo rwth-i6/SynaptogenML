@@ -2,8 +2,8 @@ from mnist_helper import run_training
 import pytest
 import torch
 from torch import nn
-from torch_memristor.quant_modules import ActivationQuantizer, LinearQuant
-from torch_memristor.memristor_modules import DacAdcHardwareSettings, MemristorLinear
+from synaptogen_ml.quant_modules import ActivationQuantizer, LinearQuant
+from synaptogen_ml.memristor_modules import DacAdcHardwareSettings, MemristorLinear
 
 
 class LinearModel(nn.Module):
