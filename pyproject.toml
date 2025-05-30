@@ -1,3 +1,35 @@
+[build-system]
+requires = ["setuptools >= 59.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SynaptogenML"
+version = "2025.05"
+description="A library based on Synaptogen and PyTorch enabling the simulation of memristor hardware for machine learning"
+dependencies = [
+    "torch",
+    "pytest"
+]
+requires-python = ">= 3.8"
+authors = [
+    {name = "Nick Rossenbach"},
+    {name = "Benedikt Hilmes"},
+    {name = "Moritz Gunz"},
+]
+
+[project.optional-dependencies]
+examples = [
+    "torchvision",
+    "jupyter"
+]
+tests = [
+    "pytest",
+    "lovely-tensors"
+]
+
+[tool.setuptools.packages.find]
+where = ["synaptogen_ml"]
+
 [tool.pytest.ini_options]
 pythonpath = [
   "."
