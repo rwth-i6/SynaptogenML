@@ -337,7 +337,8 @@ class MemristorLinear(nn.Module):
         for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
             mem_out += self.converter.adc(self.memristors[i].forward(inp)) * (2**bit)
         out = mem_out * self.output_factor
-        out = out + self.linear_bias
+        if self.linear_bias is not None:
+            out = out + self.linear_bias
         return out
 
 
@@ -499,7 +500,8 @@ class TiledMemristorLinear(nn.Module):
             mem_sum = torch.sum(torch.stack(inputs, dim=0), dim=0)
             mem_out += mem_sum * (2 ** (bit - 1))
         out = mem_out * self.output_factor
-        out = out + self.bias
+        if self.bias is not None:
+            out = out + self.bias
         return out
 
 
@@ -684,7 +686,8 @@ class MemristorConv1d(nn.Module):
         mem_out *= self.output_factor
 
         result = mem_out.reshape(*mem_out.shape[: in_ndim - 1], -1)  # [..., T', O]
-        result = result + self.bias
+        if self.bias is not None:
+            result = result + self.bias
         return result.transpose(-2, -1)  # [..., O, T']
 
 
