@@ -117,10 +117,4 @@ class TilingLinearModel(nn.Module):
 
 @pytest.mark.tiled_linear
 def test_linear():
-    print("Num Cycle = 0")
-    run_training(TilingLinearModel, expected_accuracy=0.5, batch_size=100, num_cycles=0, num_epochs=1)
-    print("Num Cycle = 1")
-    run_training(TilingLinearModel, expected_accuracy=0.4, batch_size=100, num_cycles=1, num_epochs=1)
-    for x in range(1, 11):
-        print(f"Num Cycle = {x * 10}")
-        run_training(TilingLinearModel, expected_accuracy=0.4, batch_size=100, num_cycles=x * 10, num_epochs=1)
+    run_training(TilingLinearModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=2)

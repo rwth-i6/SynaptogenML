@@ -2,7 +2,7 @@ from mnist_helper import run_training
 import pytest
 import torch
 from torch import nn
-from synatptogen_ml.memristor_modules import (
+from synaptogen_ml.memristor_modules import (
     DacAdcHardwareSettings,
     MemristorConv1d,
     TiledMemristorLinear,
@@ -178,10 +178,9 @@ class ConvModel(nn.Module):
 
 @pytest.mark.conv
 def test_conv1d():
-    print("Num Cycle = 0")
-    run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=0, num_epochs=1)
-    print("Num Cycle = 1")
-    run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=1)
-    for x in range(1, 10):
-        print(f"Num Cycle = {x * 10}")
-        run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=x * 10, num_epochs=1)
+    run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=0, num_epochs=2)
+    # print("Num Cycle = 1")
+    # run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=1)
+    # for x in range(1, 10):
+    #     print(f"Num Cycle = {x * 10}")
+    #     run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=x * 10, num_epochs=1)

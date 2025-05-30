@@ -101,9 +101,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
             total_ce += ce.detach().cpu()
             acc = torch.sum(torch.eq(torch.argmax(logits, dim=-1), labels).int())
             total_acc += acc.detach().cpu()
-            # if num_examples < 100:
-            #    print(time.time() - start_tmp)
-            # print(f"CE: {ce/BATCH_SIZE:.3f}  ACC: {acc/BATCH_SIZE:.3f}")
+
         end_float = time.time() - start
         end_float_avg = end_float / num_examples
 
