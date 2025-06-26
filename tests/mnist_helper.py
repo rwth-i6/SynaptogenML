@@ -29,7 +29,7 @@ def create_mnist_dataloaders(batch_size):
     return dataloader_train, dataloader_test
 
 
-def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: int = 10, num_cycles: int = 0, num_epochs: int = 5):
+def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 10, num_cycles: int = 0, num_epochs: int = 5):
     from lovely_tensors import monkey_patch
 
     monkey_patch()
@@ -81,7 +81,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
             optimizer.zero_grad()
 
         print(
-            f"train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
+            f"Epoch {i+1}: train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
         )
         total_ce = 0
         total_acc = 0
@@ -135,7 +135,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
         memristor_acc = total_acc / num_examples
         memristor_accs.append(memristor_acc)
         print(
-            f"test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i+1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
     assert any(
