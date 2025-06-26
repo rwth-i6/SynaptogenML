@@ -64,9 +64,9 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
         for data in dataloader_train:
             image, labels = data
             num_examples += image.shape[0]
-            if device == "cpu" and num_examples > 2000:
-                # do not train so much on CPU
-                break
+            # if device == "cpu" and num_examples > 2000:
+            #     # do not train so much on CPU
+            #     break
             image = image.to(device=device)
             labels = labels.to(device=device)
             logits = model.forward(image)
