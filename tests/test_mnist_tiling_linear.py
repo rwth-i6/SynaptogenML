@@ -117,7 +117,7 @@ class TilingLinearModel(nn.Module):
         )
 
 
-@pytest.mark.linear
+@pytest.mark.tiled_linear
 def test_linear():
     run_training(
         TilingLinearModel,

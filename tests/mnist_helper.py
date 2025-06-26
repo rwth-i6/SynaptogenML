@@ -29,7 +29,7 @@ def create_mnist_dataloaders(batch_size):
 
 
 def run_training(
-    model: Type[nn.Module],
+    model: nn.Module,
     expected_accuracy: float,
     batch_size: int = 10,
     num_cycles: int = 0,
@@ -47,7 +47,7 @@ def run_training(
     print("device: %s" % device)
 
     BATCH_SIZE = batch_size
-    NUM_EPOCHS = 1 if os.getenv("CI") and device != "cuda" else num_epochs
+    NUM_EPOCHS = 2 if os.getenv("CI") and device != "cuda" else num_epochs
 
     dataloader_train, dataloader_test = create_mnist_dataloaders(BATCH_SIZE)
 
@@ -59,7 +59,7 @@ def run_training(
 
     # do a train step
     for i in range(NUM_EPOCHS):
-        # print("\nstart train epoch %i" % i)
+        print("\nstart train epoch %i" % i)
         total_ce = 0
         total_acc = 0
         num_examples = 0
@@ -86,7 +86,7 @@ def run_training(
             optimizer.zero_grad()
 
         print(
-            f"train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
+            f"Epoch {i + 1}: train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
         )
         total_ce = 0
         total_acc = 0
@@ -111,7 +111,7 @@ def run_training(
         end_float_avg = end_float / num_examples
 
         print(
-            f"Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
         model.prepare_memristor()
@@ -140,7 +140,7 @@ def run_training(
         memristor_acc = total_acc / num_examples
         memristor_accs.append(memristor_acc)
         print(
-            f"test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
     assert any(acc >= expected_accuracy for acc in memristor_accs), (
