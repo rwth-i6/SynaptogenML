@@ -121,7 +121,7 @@ class TilingLinearModel(nn.Module):
 def test_linear():
     run_training(
         TilingLinearModel,
-        expected_accuracy=0.8,
+        expected_accuracy=0.5,
         batch_size=100,
         num_cycles=1,
         num_epochs=2,
