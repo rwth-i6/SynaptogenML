@@ -12,7 +12,7 @@ from synaptogen_ml.memristor_modules import (
 
 
 class TilingLinearModel(nn.Module):
-    def __init__(self, model_dim = 512, num_cycles: int = 0):
+    def __init__(self, model_dim=512, num_cycles: int = 0):
         super().__init__()
         self.num_cycles = num_cycles
         self.linear_1 = LinearQuant(
@@ -111,10 +111,18 @@ class TilingLinearModel(nn.Module):
             self.activation_quant_l1_in, self.linear_1, num_cycles=self.num_cycles
         )
         self.memristor_final.init_from_linear_quant(
-            self.activation_quant_final_in, self.final_linear, num_cycles=self.num_cycles
+            self.activation_quant_final_in,
+            self.final_linear,
+            num_cycles=self.num_cycles,
         )
 
 
 @pytest.mark.linear
 def test_linear():
-    run_training(TilingLinearModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=2)
+    run_training(
+        TilingLinearModel,
+        expected_accuracy=0.8,
+        batch_size=100,
+        num_cycles=1,
+        num_epochs=2,
+    )

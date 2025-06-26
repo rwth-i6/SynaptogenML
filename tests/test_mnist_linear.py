@@ -7,10 +7,9 @@ from synaptogen_ml.memristor_modules import DacAdcHardwareSettings, MemristorLin
 
 
 class LinearModel(nn.Module):
-
     def __init__(self, model_dim: int = 512, num_cycles=0):
         super().__init__()
-        
+
         assert num_cycles == 0, "no cycles support for non-tiled linear"
         assert model_dim > 0
         self.model_dim = model_dim
