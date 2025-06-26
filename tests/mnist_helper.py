@@ -54,7 +54,7 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
 
     # do a train step
     for i in range(NUM_EPOCHS):
-        #print("\nstart train epoch %i" % i)
+        print("\nstart train epoch %i" % i)
         total_ce = 0
         total_acc = 0
         num_examples = 0
@@ -106,7 +106,7 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
         end_float_avg = end_float / num_examples
 
         print(
-            f"Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i+1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
         model.prepare_memristor()
