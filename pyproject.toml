@@ -37,4 +37,5 @@ pythonpath = [
 markers = [
   "conv: Tests including convolutional layers",
   "linear: Tests including linear layers",
+  "tiled_linear: Tests including tiled linear layers",
 ]
