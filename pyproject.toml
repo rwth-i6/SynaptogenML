@@ -34,3 +34,7 @@ where = ["synaptogen_ml"]
 pythonpath = [
   "."
 ]
+markers = [
+  "conv: Tests including convolutional layers",
+  "linear: Tests including linear layers",
+]

@@ -177,8 +177,9 @@ class ConvModel(nn.Module):
 
 
 @pytest.mark.conv
+@pytest.mark.linear
 def test_conv1d():
-    run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=0, num_epochs=2)
+    run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=2)
     # print("Num Cycle = 1")
     # run_training(ConvModel, expected_accuracy=0.8, batch_size=100, num_cycles=1, num_epochs=1)
     # for x in range(1, 10):
