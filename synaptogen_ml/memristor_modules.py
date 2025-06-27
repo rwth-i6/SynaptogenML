@@ -429,8 +429,7 @@ class TiledMemristorLinear(nn.Module):
                     quant_weights_scaled_transposed_slice = (
                         quant_weights_scaled_transposed_pad[
                             j * self.memristor_inputs : (j + 1) * self.memristor_inputs,
-                            k
-                            * self.memristor_outputs : (k + 1)
+                            k * self.memristor_outputs : (k + 1)
                             * self.memristor_outputs,
                         ]
                     )
@@ -631,7 +630,6 @@ class MemristorConv1d(nn.Module):
                 positive_cells, negative_cells
             )
 
-
         self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
         self.output_factor = (
             conv_quant.weight_quantizer.scale
@@ -639,7 +637,6 @@ class MemristorConv1d(nn.Module):
             * activation_quant.quant_max
         )
         self.initialized = True
-
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
@@ -692,7 +689,6 @@ class MemristorConv1d(nn.Module):
 
 
 def compute_correction_factor():
-
     from .synaptogen import CellArrayCPU, Iread
 
     correction_factors_paired = []

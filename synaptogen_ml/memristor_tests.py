@@ -141,14 +141,13 @@ def test_conv1d():
         moving_avrg=0.01,
     )
     activation_quant(conv1d(input))
-    
+
     input = input.transpose(1, 2)
     val = conv1d_quant_to_mem_tester(input, activation_quant, conv1d)
     print(f"conv1d output: {lovely(val)}")
 
 
 def test_toy_memristor():
-
     # out x in, 3 out, 2 in
     weight_array = np.asarray(
         [
@@ -205,7 +204,6 @@ def test_polymul():
 
 
 def memristor_tests():
-
     test_polymul()
 
     torch.set_printoptions(precision=8)

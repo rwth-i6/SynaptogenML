@@ -9,7 +9,6 @@ from typing import Type
 
 
 def create_mnist_dataloaders(batch_size):
-
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
     )
@@ -29,7 +28,13 @@ def create_mnist_dataloaders(batch_size):
     return dataloader_train, dataloader_test
 
 
-def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: int = 10, num_cycles: int = 0, num_epochs: int = 5):
+def run_training(
+    model: nn.Module,
+    expected_accuracy: float,
+    batch_size: int = 10,
+    num_cycles: int = 0,
+    num_epochs: int = 5,
+):
     from lovely_tensors import monkey_patch
 
     monkey_patch()
@@ -42,7 +47,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
     print("device: %s" % device)
 
     BATCH_SIZE = batch_size
-    NUM_EPOCHS = 1 if os.getenv("CI") and device != "cuda" else num_epochs
+    NUM_EPOCHS = num_epochs
 
     dataloader_train, dataloader_test = create_mnist_dataloaders(BATCH_SIZE)
 
@@ -54,7 +59,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
 
     # do a train step
     for i in range(NUM_EPOCHS):
-        #print("\nstart train epoch %i" % i)
+        print("\nstart train epoch %i" % i)
         total_ce = 0
         total_acc = 0
         num_examples = 0
@@ -64,7 +69,7 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
         for data in dataloader_train:
             image, labels = data
             num_examples += image.shape[0]
-            if device == "cpu" and num_examples > 2000:
+            if device == "cpu" and num_examples > 4000:
                 # do not train so much on CPU
                 break
             image = image.to(device=device)
@@ -81,13 +86,13 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
             optimizer.zero_grad()
 
         print(
-            f"train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
+            f"Epoch {i + 1}: train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
         )
         total_ce = 0
         total_acc = 0
         num_examples = 0
         model.eval()
-        #print("\nstart normal-quant evaluation")
+        # print("\nstart normal-quant evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
@@ -106,13 +111,13 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
         end_float_avg = end_float / num_examples
 
         print(
-            f"Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
         model.prepare_memristor()
         model.to(device=device)
 
-        #print("\nstart memristor evaluation")
+        # print("\nstart memristor evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
@@ -135,9 +140,9 @@ def run_training(model: Type[nn.Module], expected_accuracy: float, batch_size: i
         memristor_acc = total_acc / num_examples
         memristor_accs.append(memristor_acc)
         print(
-            f"test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
-    assert any(
-        acc >= expected_accuracy for acc in memristor_accs
-    ), f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
+    assert any(acc >= expected_accuracy for acc in memristor_accs), (
+        f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
+    )

@@ -93,9 +93,9 @@ class WeightQuantizer(nn.Module):
 
     def set_scale_and_zp(self):
         assert self.observer is not None
-        assert check_min_max_valid(
-            self.observer.min_val, self.observer.max_val
-        ), "Need to init observer first"
+        assert check_min_max_valid(self.observer.min_val, self.observer.max_val), (
+            "Need to init observer first"
+        )
         scale, zero_point = self.observer.calculate_qparams()
         self.scale = scale.to(dtype=torch.float32)
         self.zero_point = zero_point.to(dtype=torch.int32)
@@ -204,9 +204,9 @@ class ActivationQuantizer(nn.Module):
         if self.training:
             tensor = self.observer(tensor)
         self.set_scale_and_zp()
-        assert (
-            self.scale is not None and self.zero_point is not None
-        ), "Need to calibrate before applying quant, disable apply_calibration"
+        assert self.scale is not None and self.zero_point is not None, (
+            "Need to calibrate before applying quant, disable apply_calibration"
+        )
         tensor = self.quant_fn(
             tensor, self.scale, self.zero_point, self.quant_min, self.quant_max
         )
@@ -214,9 +214,9 @@ class ActivationQuantizer(nn.Module):
 
     def set_scale_and_zp(self):
         assert self.observer is not None
-        assert check_min_max_valid(
-            self.observer.min_val, self.observer.max_val
-        ), "Need to init observer first"
+        assert check_min_max_valid(self.observer.min_val, self.observer.max_val), (
+            "Need to init observer first"
+        )
         scale, zero_point = self.observer.calculate_qparams()
         self.scale = scale.to(dtype=torch.float32)
         self.zero_point = zero_point.to(dtype=torch.int32)
