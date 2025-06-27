@@ -42,7 +42,7 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
     print("device: %s" % device)
 
     BATCH_SIZE = batch_size
-    NUM_EPOCHS = 2 if os.getenv("CI") and device != "cuda" else num_epochs
+    NUM_EPOCHS = num_epochs
 
     dataloader_train, dataloader_test = create_mnist_dataloaders(BATCH_SIZE)
 
