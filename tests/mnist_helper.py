@@ -9,7 +9,6 @@ from typing import Type
 
 
 def create_mnist_dataloaders(batch_size):
-
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
     )
@@ -29,7 +28,13 @@ def create_mnist_dataloaders(batch_size):
     return dataloader_train, dataloader_test
 
 
-def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 10, num_cycles: int = 0, num_epochs: int = 5):
+def run_training(
+    model: nn.Module,
+    expected_accuracy: float,
+    batch_size: int = 10,
+    num_cycles: int = 0,
+    num_epochs: int = 5,
+):
     from lovely_tensors import monkey_patch
 
     monkey_patch()
@@ -81,13 +86,13 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
             optimizer.zero_grad()
 
         print(
-            f"Epoch {i+1}: train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
+            f"Epoch {i + 1}: train ce: {total_ce / num_examples:.3f} acc: {total_acc / num_examples:.3f}"
         )
         total_ce = 0
         total_acc = 0
         num_examples = 0
         model.eval()
-        #print("\nstart normal-quant evaluation")
+        # print("\nstart normal-quant evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
@@ -106,13 +111,13 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
         end_float_avg = end_float / num_examples
 
         print(
-            f"Epoch {i+1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
         model.prepare_memristor()
         model.to(device=device)
 
-        #print("\nstart memristor evaluation")
+        # print("\nstart memristor evaluation")
         start = time.time()
         for data in dataloader_test:
             start_tmp = time.time()
@@ -135,9 +140,9 @@ def run_training(model: nn.Module, expected_accuracy: float, batch_size: int = 1
         memristor_acc = total_acc / num_examples
         memristor_accs.append(memristor_acc)
         print(
-            f"Epoch {i+1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
+            f"Epoch {i + 1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
-    assert any(
-        acc >= expected_accuracy for acc in memristor_accs
-    ), f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
+    assert any(acc >= expected_accuracy for acc in memristor_accs), (
+        f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
+    )
