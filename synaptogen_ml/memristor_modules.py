@@ -533,7 +533,7 @@ class MemristorConv1d(nn.Module):
         assert in_channels % groups == 0
         self.groups = groups
         if not groups == in_channels == out_channels:
-            raise NotImplementedError
+            raise NotImplementedError("Conv1d currently only supports groups == in_channels == out_channels")
         assert kernel_size > 0
         self.kernel_size = kernel_size
         if isinstance(padding, int):
