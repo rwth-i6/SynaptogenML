@@ -11,10 +11,10 @@ from .quant_modules import Conv1DQuant, LinearQuant, ActivationQuantizer
 from .synaptogen import CellArrayCPU
 
 
+@torch.compile
 def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements.
-
     :param coefficients: polynomial coefficients of shape [P], in ascending order of degree
     :param inputs: inputs ("x") to be evaluated in the shape of [..., I]
     :return: [...., I] outputs
@@ -25,6 +25,7 @@ def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     return result.sum(dim=-1)  # [..., I]
 
 
+@torch.compile
 def poly_mul_horner(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements using Horner's optimized method.
