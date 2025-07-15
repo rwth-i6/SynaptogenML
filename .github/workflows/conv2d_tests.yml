@@ -1,4 +1,4 @@
-name: conv_tests
+name: conv2d_tests
 on:
   push:
     branches:
