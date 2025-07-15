@@ -1,0 +1,24 @@
+name: conv_tests
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  test-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      - run: |
+          pip install --upgrade pip setuptools wheel
+          pip install pytest
+          pip install -r requirements.txt
+      - name: Test Models
+        run: |
+          python -m pytest tests -m conv2d
