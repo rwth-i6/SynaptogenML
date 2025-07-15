@@ -747,7 +747,6 @@ class MemristorConv2d(nn.Module):
         assert all(x > 0 for x in stride)
         self.stride = stride
 
-
         self.memristors = torch.nn.ModuleList(
             [
                 PairedMemristorArrayV2(
