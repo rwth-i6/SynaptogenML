@@ -747,18 +747,6 @@ class MemristorConv2d(nn.Module):
         assert all(x > 0 for x in stride)
         self.stride = stride
 
-        print(
-            PairedMemristorArrayV2(
-                in_features=kernel_size[1],
-                out_features=1,
-                additional_axes=(
-                    groups,
-                    in_channels // groups,
-                    out_channels // groups,
-                    kernel_size[0],
-                ),
-            )
-        )
 
         self.memristors = torch.nn.ModuleList(
             [
