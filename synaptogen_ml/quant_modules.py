@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.ao.quantization as torch_quant
 import torch.nn.functional as F
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 import math
 from torch.nn import init
 from torch.ao.quantization.utils import check_min_max_valid
@@ -315,6 +315,71 @@ class Conv1DQuant(nn.Module):
 
     def forward(self, tensor: torch.Tensor):
         result = F.conv1d(
+            tensor,
+            self.weight_quantizer(self.weight),
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
+        return result
+
+
+class Conv2dQuant(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: Union[int, Tuple[int, int]],
+        weight_bit_prec: int,
+        weight_quant_dtype: torch.dtype,
+        weight_quant_method: str,
+        bias: bool,
+        stride: Union[int, Tuple[int, int]],
+        padding: Union[str, int, Tuple[int, int]],
+        dilation: int,
+        groups: int,
+        padding_mode: str = "zeros",
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        self.padding_mode = padding_mode
+
+        self.weight = nn.Parameter(
+            torch.empty(out_channels, in_channels // groups, *kernel_size),
+            requires_grad=True,
+        )
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.bias = None
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            if fan_in != 0:
+                bound = 1 / math.sqrt(fan_in)
+                init.uniform_(self.bias, -bound, bound)
+
+        self.weight_bit_prec = weight_bit_prec
+        self.weight_quant_dtype = weight_quant_dtype
+        self.weight_quant_method = weight_quant_method
+        self.weight_quantizer = WeightQuantizer(
+            bit_precision=self.weight_bit_prec,
+            dtype=self.weight_quant_dtype,
+            method=self.weight_quant_method,
+        )
+
+    def forward(self, tensor: torch.Tensor):
+        result = F.conv2d(
             tensor,
             self.weight_quantizer(self.weight),
             self.bias,
