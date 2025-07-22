@@ -3,11 +3,9 @@ import pytest
 from typing import Tuple
 import torch
 from torch import nn
-from synaptogen_ml.memristor_modules import (
-    DacAdcHardwareSettings,
-    MemristorConv2d,
-    TiledMemristorLinear,
-)
+from synaptogen_ml.memristor_modules.memristor import DacAdcHardwareSettings
+from synaptogen_ml.memristor_modules.conv import MemristorConv2d
+from synaptogen_ml.memristor_modules.linear import TiledMemristorLinear
 from synaptogen_ml.quant_modules import ActivationQuantizer, Conv2dQuant, LinearQuant
 
 
@@ -171,15 +169,15 @@ class ConvModel(nn.Module):
 
     def prepare_memristor(self):
         self.memristor_conv_1.init_from_conv_quant(
-            self.activation_quant_c1_in, self.conv_1, num_cycles=self.num_cycles
+            self.activation_quant_c1_in, self.conv_1, num_cycles_init=self.num_cycles
         )
         self.memristor_conv_2.init_from_conv_quant(
-            self.activation_quant_c2_in, self.conv_2, num_cycles=self.num_cycles
+            self.activation_quant_c2_in, self.conv_2, num_cycles_init=self.num_cycles
         )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in,
             self.final_linear,
-            num_cycles=0,
+            num_cycles_init=0,
         )
 
 

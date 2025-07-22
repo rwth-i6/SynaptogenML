@@ -1,21 +1,16 @@
-from dataclasses import dataclass
-
 import numpy as np
 import torch
-from torch import nn
 
-from .synaptogen import CellArrayCPU
-from .quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
-from .memristor_modules import (
-    ActivationQuantizer,
+from synaptogen_ml.synaptogen import CellArrayCPU
+from synaptogen_ml.quant_modules import ActivationQuantizer, Conv1DQuant, LinearQuant
+from synaptogen_ml.memristor_modules.memristor import (
     DacAdcHardwareSettings,
     DacAdcPair,
     MemristorArray,
-    MemristorConv1d,
     PairedMemristorArrayV2,
-    poly_mul_horner,
-    poly_mul,
 )
+from synaptogen_ml.memristor_modules.conv import MemristorConv1d
+from synaptogen_ml.memristor_modules.util import poly_mul, poly_mul_horner
 
 
 def linear_quant_to_mem_tester(
@@ -110,7 +105,7 @@ def conv1d_quant_to_mem_tester(
         converter_hardware_settings=hardware_settings,
         weight_precision=conv1d_quant.weight_bit_prec,
     )
-    mem_conv.init_from_conv_quant(activation_quant, conv1d_quant)
+    mem_conv.init_from_conv_quant(activation_quant, conv1d_quant, num_cycles_init=0)
     return mem_conv.forward(example_input)
 
 
@@ -208,7 +203,7 @@ def memristor_tests():
 
     torch.set_printoptions(precision=8)
 
-    from .synaptogen import CellArrayCPU, Iread
+    from synaptogen_ml.synaptogen import CellArrayCPU, Iread
 
     cells = CellArrayCPU(2)  # 1 in 2 out, simple differential
     print(cells.params.HHRSdeg)
@@ -229,7 +224,7 @@ def memristor_tests():
     torch_cells.resistance_weighted_poly_high.data = HHRS
     torch_cells.r.data = torch.Tensor(cells.r).resize(1, 2).transpose(0, 1)
 
-    from .synaptogen import polyval
+    from synaptogen_ml.synaptogen import polyval
 
     low_poly = polyval(cells.params.LLRS, input_high)
     print(f"low_poly: {low_poly}")
@@ -245,7 +240,7 @@ def memristor_tests():
     )
     print(f"high_poly_torch: {high_poly_torch}")
 
-    from .synaptogen import Imix
+    from synaptogen_ml.synaptogen import Imix
 
     mix = Imix(cells.r, input_high, cells.params.HHRS, cells.params.LLRS)
     print(mix)
@@ -436,7 +431,7 @@ def memristor_tests():
 
 
 if __name__ == "__main__":
-    from .memristor_modules import compute_correction_factor
+    from synaptogen_ml.memristor_modules.util import compute_correction_factor
 
     compute_correction_factor()
     # test_toy_memristor()

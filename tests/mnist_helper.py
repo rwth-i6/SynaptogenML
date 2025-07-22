@@ -1,11 +1,9 @@
-import os
 import time
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets.mnist import MNIST
-from typing import Type
 
 
 def create_mnist_dataloaders(batch_size):

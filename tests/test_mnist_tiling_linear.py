@@ -3,12 +3,8 @@ import pytest
 import torch
 from torch import nn
 from synaptogen_ml.quant_modules import LinearQuant, ActivationQuantizer
-
-
-from synaptogen_ml.memristor_modules import (
-    TiledMemristorLinear,
-    DacAdcHardwareSettings,
-)
+from synaptogen_ml.memristor_modules.memristor import DacAdcHardwareSettings
+from synaptogen_ml.memristor_modules.linear import TiledMemristorLinear
 
 
 class TilingLinearModel(nn.Module):
@@ -108,12 +104,12 @@ class TilingLinearModel(nn.Module):
 
     def prepare_memristor(self):
         self.memristor_linear_1.init_from_linear_quant(
-            self.activation_quant_l1_in, self.linear_1, num_cycles=self.num_cycles
+            self.activation_quant_l1_in, self.linear_1, num_cycles_init=self.num_cycles
         )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in,
             self.final_linear,
-            num_cycles=self.num_cycles,
+            num_cycles_init=self.num_cycles,
         )
 
 

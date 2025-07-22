@@ -3,7 +3,8 @@ import pytest
 import torch
 from torch import nn
 from synaptogen_ml.quant_modules import ActivationQuantizer, LinearQuant
-from synaptogen_ml.memristor_modules import DacAdcHardwareSettings, MemristorLinear
+from synaptogen_ml.memristor_modules.memristor import DacAdcHardwareSettings
+from synaptogen_ml.memristor_modules.linear import MemristorLinear
 
 
 class LinearModel(nn.Module):
