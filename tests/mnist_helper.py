@@ -112,6 +112,9 @@ def run_training(
             f"Epoch {i + 1}: Normal-quant test ce: {total_ce / num_examples:.6f}, acc: {total_acc / num_examples:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
+        total_ce = 0
+        total_acc = 0
+        num_examples = 0
         model.prepare_memristor()
         model.to(device=device)
 
@@ -141,6 +144,6 @@ def run_training(
             f"Epoch {i + 1}: test memristor ce: {total_ce / num_examples:.6f}, acc: {memristor_acc:.6f}, time: {end_float:.2f}s, per sample: {end_float_avg:.2f}s"
         )
 
-    assert any(acc >= expected_accuracy for acc in memristor_accs), (
-        f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
-    )
+    assert any(
+        acc >= expected_accuracy for acc in memristor_accs
+    ), f"accuracy too low: {max(memristor_accs):.2f} <= {expected_accuracy:.2f}"
