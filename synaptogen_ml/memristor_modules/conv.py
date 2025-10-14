@@ -86,7 +86,9 @@ class MemristorConv1d(nn.Module):
         conv_quant: Conv1DQuant,
         num_cycles_init: int,
     ):
-        quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach() # [out, in, kernel]
+        quant_weights = conv_quant.weight_quantizer(
+            conv_quant.weight
+        ).detach()  # [out, in, kernel]
         self.bias = conv_quant.bias
 
         # handle weight sign separately because integer division with negative numbers does not work as expected
@@ -276,7 +278,9 @@ class MemristorConv2d(nn.Module):
         conv_quant: Conv2dQuant,
         num_cycles_init: int,
     ):
-        quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach()  # out channels, in channels, kernel[0], kernel[1]
+        quant_weights = conv_quant.weight_quantizer(
+            conv_quant.weight
+        ).detach()  # out channels, in channels, kernel[0], kernel[1]
 
         self.bias = conv_quant.bias
 
@@ -295,7 +299,9 @@ class MemristorConv2d(nn.Module):
             quant_weights_scaled_abs = quant_weights_scaled_abs % (2**bit)
 
             # re-apply sign and transpose
-            quant_weights_scaled_transposed = quant_weights_scaled_bit * weights_sign # [in, out, k[0], k[1]]
+            quant_weights_scaled_transposed = (
+                quant_weights_scaled_bit * weights_sign
+            )  # [in, out, k[0], k[1]]
 
             # Arrays need flat input
             flat = torch.flatten(quant_weights_scaled_transposed).cpu()
@@ -412,6 +418,7 @@ class MemristorConv2d(nn.Module):
             result = result + self.bias
         return result.permute(0, 3, 2, 1)  # [..., O, T']
 
+
 class SingleKernelMemristorConv2d(nn.Module):
     """
     Memristive 2d-convolution
@@ -462,7 +469,7 @@ class SingleKernelMemristorConv2d(nn.Module):
         self.memristors = torch.nn.ModuleList(
             [
                 PairedMemristorArrayV2(
-                    in_features=in_channels*kernel_size[0]*kernel_size[1],
+                    in_features=in_channels * kernel_size[0] * kernel_size[1],
                     out_features=out_channels,
                 )
                 for _ in range(weight_precision - 1)
@@ -485,11 +492,20 @@ class SingleKernelMemristorConv2d(nn.Module):
         conv_quant: Conv2dQuant,
         num_cycles_init: int,
     ):
-        quant_weights = conv_quant.weight_quantizer(conv_quant.weight).detach() # out channels, in channels, kernel[0], kernel[1]
+        quant_weights = conv_quant.weight_quantizer(
+            conv_quant.weight
+        ).detach()  # out channels, in channels, kernel[0], kernel[1]
         # shape into memristor form with extra axis over in channels
-        quant_weights = torch.reshape(quant_weights, (self.out_channels, self.in_channels, self.kernel_size[0]*self.kernel_size[1]))
+        quant_weights = torch.reshape(
+            quant_weights,
+            (
+                self.out_channels,
+                self.in_channels,
+                self.kernel_size[0] * self.kernel_size[1],
+            ),
+        )
         # [out, in , k[0]*k[1]]
-        quant_weights = torch.permute(quant_weights, (1, 0, 2)) # [in, out, k[0]*k[1]]
+        quant_weights = torch.permute(quant_weights, (1, 0, 2))  # [in, out, k[0]*k[1]]
         self.bias = conv_quant.bias
 
         # handle weight sign separately because integer division with negative numbers does not work as expected
@@ -583,17 +599,18 @@ class SingleKernelMemristorConv2d(nn.Module):
         in2 = in1.reshape(
             batch_size, in_channels, -1, self.kernel_size[0], self.kernel_size[1]
         )  # [Batch, in_channels, T//S[0] * F//S[1], K_[0], K_[1]]
-        in3 = in2.permute(0, 2, 1, 3, 4) # [Batch, T//S[0] * F//S[1], in_channels, K_[0], K_[1]]
-        in4 = in3.reshape(batch_size, -1, in_channels * self.kernel_size[0] * self.kernel_size[1])
-        out = self.memristors[-1].forward(in4) # [Batch, T//S[0] * F//S[1], out_channels]
-        mem_out = self.converter.adc(
-            out
+        in3 = in2.permute(
+            0, 2, 1, 3, 4
+        )  # [Batch, T//S[0] * F//S[1], in_channels, K_[0], K_[1]]
+        in4 = in3.reshape(
+            batch_size, -1, in_channels * self.kernel_size[0] * self.kernel_size[1]
+        )
+        out = self.memristors[-1].forward(
+            in4
         )  # [Batch, T//S[0] * F//S[1], out_channels]
+        mem_out = self.converter.adc(out)  # [Batch, T//S[0] * F//S[1], out_channels]
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
-            out = (
-                self.memristors[i]
-                .forward(in4)
-            )
+            out = self.memristors[i].forward(in4)
             mem_out += self.converter.adc(out) * (2 ** (bit))
         result = mem_out * self.output_factor
         if self.bias is not None:
