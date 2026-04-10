@@ -29,6 +29,7 @@ class MemristorConv1d(nn.Module):
         groups: int,
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
+        bias: bool = True,
     ):
         super().__init__()
 
@@ -74,11 +75,14 @@ class MemristorConv1d(nn.Module):
         assert weight_precision > 0
         self.weight_precision = weight_precision
 
-        self.input_factor = 1.0
-        self.output_factor = 1.0
+        self.input_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.output_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.initialized = False
-        self.bias = None
+        if bias is True:
+            self.bias = nn.Parameter(torch.empty((out_channels,)), requires_grad=True)
+        else:
+            self.bias = None
 
     def init_from_conv_quant(
         self,
@@ -134,11 +138,17 @@ class MemristorConv1d(nn.Module):
                 positive_cells, negative_cells
             )
 
-        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = (
-            conv_quant.weight_quantizer.scale
-            * activation_quant.scale
-            * activation_quant.quant_max
+        self.input_factor = torch.nn.Parameter(
+            1.0 / (activation_quant.scale * activation_quant.quant_max),
+            requires_grad=False,
+        )
+        self.output_factor = torch.nn.Parameter(
+            (
+                conv_quant.weight_quantizer.scale
+                * activation_quant.scale
+                * activation_quant.quant_max
+            ),
+            requires_grad=False,
         )
         self.initialized = True
 
@@ -151,6 +161,10 @@ class MemristorConv1d(nn.Module):
         """
 
         assert self.initialized
+        assert not self.output_factor == 1.0, (
+            "Is the model properly initialized?",
+            self.output_factor,
+        )
 
         in_ndim = inputs.ndim
         inputs = self.converter.dac(inputs * self.input_factor)
@@ -211,6 +225,7 @@ class MemristorConv2d(nn.Module):
         groups: int,
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
+        bias: bool = True,
     ):
         super().__init__()
 
@@ -266,11 +281,14 @@ class MemristorConv2d(nn.Module):
         assert weight_precision > 0
         self.weight_precision = weight_precision
 
-        self.input_factor = 1.0
-        self.output_factor = 1.0
+        self.input_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.output_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.initialized = False
-        self.bias = None
+        if bias is True:
+            self.bias = nn.Parameter(torch.empty((out_channels,)), requires_grad=True)
+        else:
+            self.bias = None
 
     def init_from_conv_quant(
         self,
@@ -327,11 +345,17 @@ class MemristorConv2d(nn.Module):
                 positive_cells, negative_cells
             )
 
-        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = (
-            conv_quant.weight_quantizer.scale
-            * activation_quant.scale
-            * activation_quant.quant_max
+        self.input_factor = torch.nn.Parameter(
+            1.0 / (activation_quant.scale * activation_quant.quant_max),
+            requires_grad=False,
+        )
+        self.output_factor = torch.nn.Parameter(
+            (
+                conv_quant.weight_quantizer.scale
+                * activation_quant.scale
+                * activation_quant.quant_max
+            ),
+            requires_grad=False,
         )
         self.initialized = True
 
@@ -343,6 +367,10 @@ class MemristorConv2d(nn.Module):
         :return: [..., F', T']
         """
         assert self.initialized
+        assert not self.output_factor == 1.0, (
+            "Is the model properly initialized?",
+            self.output_factor,
+        )
 
         inputs = self.converter.dac(inputs * self.input_factor)
         inputs = inputs.transpose(-2, -1)  # [..., T, F]
@@ -438,6 +466,7 @@ class SingleKernelMemristorConv2d(nn.Module):
         groups: int,
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
+        bias: bool = True,
     ):
         super().__init__()
 
@@ -480,11 +509,14 @@ class SingleKernelMemristorConv2d(nn.Module):
         assert weight_precision > 0
         self.weight_precision = weight_precision
 
-        self.input_factor = None
-        self.output_factor = None
+        self.input_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.output_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.initialized = False
-        self.bias = None
+        if bias is True:
+            self.bias = nn.Parameter(torch.empty((out_channels,)), requires_grad=True)
+        else:
+            self.bias = None
 
     def init_from_conv_quant(
         self,
@@ -551,11 +583,17 @@ class SingleKernelMemristorConv2d(nn.Module):
                 positive_cells, negative_cells
             )
 
-        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = (
-            conv_quant.weight_quantizer.scale
-            * activation_quant.scale
-            * activation_quant.quant_max
+        self.input_factor = torch.nn.Parameter(
+            1.0 / (activation_quant.scale * activation_quant.quant_max),
+            requires_grad=False,
+        )
+        self.output_factor = torch.nn.Parameter(
+            (
+                conv_quant.weight_quantizer.scale
+                * activation_quant.scale
+                * activation_quant.quant_max
+            ),
+            requires_grad=False,
         )
         self.initialized = True
 
@@ -567,6 +605,10 @@ class SingleKernelMemristorConv2d(nn.Module):
         :return: [..., C', T1', T2']
         """
         assert self.initialized
+        assert not self.output_factor == 1.0, (
+            "Is the model properly initialized?",
+            self.output_factor,
+        )
 
         inputs = self.converter.dac(inputs * self.input_factor)
         batch_size, in_channels, time_dim1, time_dim2 = inputs.shape
