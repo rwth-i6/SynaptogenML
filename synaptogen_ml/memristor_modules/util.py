@@ -11,7 +11,7 @@ import torch
 from torch.utils._triton import has_triton
 
 
-@torch.compile(disable=has_triton())
+@torch.compile(disable=not has_triton())
 def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements.
@@ -25,7 +25,7 @@ def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     return result.sum(dim=-1)  # [..., I]
 
 
-@torch.compile(disable=has_triton())
+@torch.compile(disable=not has_triton())
 def poly_mul_horner(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
     """
     Evaluate a polynomial function on all input elements using Horner's optimized method.
