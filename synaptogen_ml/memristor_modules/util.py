@@ -3,13 +3,14 @@ __all__ = [
     "poly_mul_horner",
     "randn_broadcast",
     "compute_correction_factor",
+    "CycleCorrectionSettings"
 ]
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 from torch.utils._triton import has_triton
-
+from dataclasses import dataclass
 
 @torch.compile(disable=not has_triton())
 def poly_mul(coefficients: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
@@ -110,3 +111,9 @@ def compute_correction_factor():
 
     print(f"correction factor paired: {np.mean(correction_factors_paired)}")
     print(f"correction factor single: {np.mean(correction_factors_single)}")
+
+@dataclass
+class CycleCorrectionSettings:
+    num_cycles: int  # how often
+    test_input_value: float  # what to feed to check if working
+    relative_deviation: float  # acceptable deviation
