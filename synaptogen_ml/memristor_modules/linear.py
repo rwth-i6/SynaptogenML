@@ -15,6 +15,7 @@ class MemristorLinear(nn.Module):
         out_features: int,
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
+        bias: bool = True,
     ):
         super().__init__()
         self.weight_precision = weight_precision
@@ -25,11 +26,16 @@ class MemristorLinear(nn.Module):
             ]
         )
         self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
-        self.input_factor = 1.0
-        self.output_factor = 1.0
+        self.input_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.output_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.initialized = False
-        self.linear_bias = None
+        if bias:
+            self.linear_bias = nn.Parameter(
+                torch.empty((out_features,)), requires_grad=True
+            )
+        else:
+            self.linear_bias = None
 
     def init_from_linear_quant(
         self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant
@@ -73,16 +79,27 @@ class MemristorLinear(nn.Module):
                 positive_cells, negative_cells
             )
 
-        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = (
-            linear_quant.weight_quantizer.scale
-            * activation_quant.scale
-            * activation_quant.quant_max
+        self.input_factor = torch.nn.Parameter(
+            1.0 / (activation_quant.scale * activation_quant.quant_max),
+            requires_grad=False,
+        )
+        self.output_factor = torch.nn.Parameter(
+            (
+                linear_quant.weight_quantizer.scale
+                * activation_quant.scale
+                * activation_quant.quant_max
+            ),
+            requires_grad=False,
         )
         self.initialized = True
 
     def forward(self, inputs: torch.Tensor):
         assert self.initialized
+        assert not self.output_factor == 1.0, (
+            "Is the model output properly initialized?",
+            self.output_factor,
+        )
+
         inp = self.converter.dac(inputs * self.input_factor)
         mem_out = self.converter.adc(self.memristors[-1].forward(inp))
         for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
@@ -102,6 +119,7 @@ class TiledMemristorLinear(nn.Module):
         converter_hardware_settings: DacAdcHardwareSettings,
         memristor_inputs: int,
         memristor_outputs: int,
+        bias: bool = True,
     ):
         super().__init__()
         self.weight_precision = weight_precision
@@ -122,11 +140,14 @@ class TiledMemristorLinear(nn.Module):
             ]
         )
         self.converter = DacAdcPair(hardware_settings=converter_hardware_settings)
-        self.input_factor = 1.0
-        self.output_factor = 1.0
+        self.input_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        self.output_factor = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.initialized = False
-        self.bias = None
+        if bias is True:
+            self.bias = nn.Parameter(torch.empty((out_features,)), requires_grad=True)
+        else:
+            self.bias = None
 
     def get_memristor_index(self, bit_level_index, input_index, output_index):
         return (
@@ -211,16 +232,26 @@ class TiledMemristorLinear(nn.Module):
                         positive_cells, negative_cells
                     )
 
-        self.input_factor = 1.0 / (activation_quant.scale * activation_quant.quant_max)
-        self.output_factor = (
-            linear_quant.weight_quantizer.scale
-            * activation_quant.scale
-            * activation_quant.quant_max
+        self.input_factor = torch.nn.Parameter(
+            1.0 / (activation_quant.scale * activation_quant.quant_max),
+            requires_grad=False,
+        )
+        self.output_factor = torch.nn.Parameter(
+            (
+                linear_quant.weight_quantizer.scale
+                * activation_quant.scale
+                * activation_quant.quant_max
+            ),
+            requires_grad=False,
         )
         self.initialized = True
 
     def forward(self, inputs: torch.Tensor):
         assert self.initialized
+        assert not self.output_factor == 1.0, (
+            "Is the model properly initialized?",
+            self.output_factor,
+        )
         inp = self.converter.dac(inputs * self.input_factor)
         fill_input = self.input_tiling * self.memristor_inputs - inp.size(-1)
         inp = nn.functional.pad(inp, (0, fill_input))
