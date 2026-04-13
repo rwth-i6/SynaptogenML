@@ -11,6 +11,7 @@ from ..synaptogen import CellArrayCPU
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
 from .util import CycleCorrectionSettings
 
+
 class MemristorConv1d(nn.Module):
     """
     Memristive 1d-convolution as required for the implementation of a Conformer block.
@@ -137,20 +138,33 @@ class MemristorConv1d(nn.Module):
 
             if correction_settings is not None:
                 for _ in range(correction_settings.num_cycles):
-                    tensor = np.ones_like(positive_weights) * correction_settings.test_input_value
-                    pos = positive_cells.I(tensor) * self.converter.hs.hardware_output_current_scaling
-                    neg = negative_cells.I(tensor) * self.converter.hs.hardware_output_current_scaling
+                    tensor = (
+                        np.ones_like(positive_weights)
+                        * correction_settings.test_input_value
+                    )
+                    pos = (
+                        positive_cells.I(tensor)
+                        * self.converter.hs.hardware_output_current_scaling
+                    )
+                    neg = (
+                        negative_cells.I(tensor)
+                        * self.converter.hs.hardware_output_current_scaling
+                    )
                     pos_dev = np.abs(pos - positive_weights)
                     neg_dev = np.abs(neg - negative_weights)
                     pos_mask = pos_dev > correction_settings.relative_deviation
                     neg_mask = neg_dev > correction_settings.relative_deviation
                     positive_cells.applyVoltage(pos_mask * positive_weights * 2.0)
                     positive_cells.applyVoltage(pos_mask * positive_weights * -2.0)
-                    positive_cells.applyVoltage(pos_mask * (1 - positive_weights) * -2.0)
+                    positive_cells.applyVoltage(
+                        pos_mask * (1 - positive_weights) * -2.0
+                    )
                     positive_cells.applyVoltage(pos_mask * (1 - positive_weights) * 2.0)
                     negative_cells.applyVoltage(neg_mask * negative_weights * 2.0)
                     negative_cells.applyVoltage(neg_mask * negative_weights * -2.0)
-                    negative_cells.applyVoltage(neg_mask * (1 - negative_weights) * -2.0)
+                    negative_cells.applyVoltage(
+                        neg_mask * (1 - negative_weights) * -2.0
+                    )
                     negative_cells.applyVoltage(neg_mask * (1 - negative_weights) * 2.0)
 
             self.memristors[i].init_from_paired_cell_array_input_major(
@@ -317,7 +331,9 @@ class MemristorConv2d(nn.Module):
         correction_settings: Optional[CycleCorrectionSettings],
     ):
         # should be derviable from MemristorConv1d
-        assert correction_settings is None, "correction_settings not implemented for Conv2d"
+        assert correction_settings is None, (
+            "correction_settings not implemented for Conv2d"
+        )
         quant_weights = conv_quant.weight_quantizer(
             conv_quant.weight
         ).detach()  # out channels, in channels, kernel[0], kernel[1]
@@ -548,7 +564,9 @@ class SingleKernelMemristorConv2d(nn.Module):
         correction_settings: Optional[CycleCorrectionSettings],
     ):
         # should be deriveable from MemristorConv1d
-        assert correction_settings is None, "correction_settings not implemented for SingleKernelMemristorConv2d"
+        assert correction_settings is None, (
+            "correction_settings not implemented for SingleKernelMemristorConv2d"
+        )
         quant_weights = conv_quant.weight_quantizer(
             conv_quant.weight
         ).detach()  # out channels, in channels, kernel[0], kernel[1]
