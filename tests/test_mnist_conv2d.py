@@ -169,15 +169,16 @@ class ConvModel(nn.Module):
 
     def prepare_memristor(self):
         self.memristor_conv_1.init_from_conv_quant(
-            self.activation_quant_c1_in, self.conv_1, num_cycles_init=self.num_cycles
+            self.activation_quant_c1_in, self.conv_1, num_cycles_init=self.num_cycles,correction_settings=None,
         )
         self.memristor_conv_2.init_from_conv_quant(
-            self.activation_quant_c2_in, self.conv_2, num_cycles_init=self.num_cycles
+            self.activation_quant_c2_in, self.conv_2, num_cycles_init=self.num_cycles, correction_settings=None,
         )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in,
             self.final_linear,
             num_cycles_init=0,
+            correction_settings=None,
         )
 
 
