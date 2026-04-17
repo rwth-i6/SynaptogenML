@@ -104,12 +104,16 @@ class TilingLinearModel(nn.Module):
 
     def prepare_memristor(self):
         self.memristor_linear_1.init_from_linear_quant(
-            self.activation_quant_l1_in, self.linear_1, num_cycles_init=self.num_cycles
+            self.activation_quant_l1_in,
+            self.linear_1,
+            num_cycles_init=self.num_cycles,
+            correction_settings=None,
         )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in,
             self.final_linear,
             num_cycles_init=self.num_cycles,
+            correction_settings=None,
         )
 
 

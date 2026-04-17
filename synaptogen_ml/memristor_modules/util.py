@@ -63,7 +63,7 @@ def randn_broadcast(
     return broadcasted_tensor
 
 
-def compute_correction_factor():
+def compute_correction_factor(ideal: bool = False):
     from ..synaptogen import CellArrayCPU, Iread
 
     correction_factors_paired = []
@@ -85,6 +85,9 @@ def compute_correction_factor():
 
         # applyVoltage(estimation_cells, -2.5)
         estimation_cells.applyVoltage(np.asarray([-2.5] * 100 + [0.0] * 100))
+        if ideal is True:
+            estimation_cells.r[:100] = np.asarray([0.0] * 100)
+            estimation_cells.r[100:] = np.asarray([1.0] * 100)
         correction_factors = []
         correction_factors_nc = []
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
