@@ -9,6 +9,7 @@ from ..synaptogen import CellArrayCPU
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
 from .config import CycleCorrectionSettings
 
+
 class MemristorLinear(nn.Module):
     def __init__(
         self,
@@ -230,9 +231,16 @@ class TiledMemristorLinear(nn.Module):
                     size = flat.shape[0]
                     positive_cells = CellArrayCPU(size)
                     negative_cells = CellArrayCPU(size)
-                    if correction_settings is not None and correction_settings.ideal_programming:
-                        positive_cells.r = np.ones_like(positive_weights) - positive_weights
-                        negative_cells.r = np.ones_like(negative_weights) - negative_weights
+                    if (
+                        correction_settings is not None
+                        and correction_settings.ideal_programming
+                    ):
+                        positive_cells.r = (
+                            np.ones_like(positive_weights) - positive_weights
+                        )
+                        negative_cells.r = (
+                            np.ones_like(negative_weights) - negative_weights
+                        )
                     else:
                         for _ in range(num_cycles_init * 15):
                             positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
@@ -259,8 +267,12 @@ class TiledMemristorLinear(nn.Module):
                                 )
                                 pos_dev = np.abs(pos - positive_weights)
                                 neg_dev = np.abs(neg - negative_weights)
-                                pos_mask = pos_dev > correction_settings.relative_deviation
-                                neg_mask = neg_dev > correction_settings.relative_deviation
+                                pos_mask = (
+                                    pos_dev > correction_settings.relative_deviation
+                                )
+                                neg_mask = (
+                                    neg_dev > correction_settings.relative_deviation
+                                )
                                 positive_cells.applyVoltage(
                                     pos_mask * positive_weights * 2.0
                                 )
