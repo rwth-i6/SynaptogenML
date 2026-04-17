@@ -127,7 +127,10 @@ class MemristorConv1d(nn.Module):
             size = flat.shape[0]
             positive_cells = CellArrayCPU(size)
             negative_cells = CellArrayCPU(size)
-            if correction_settings is not None and correction_settings.ideal_programming:
+            if (
+                correction_settings is not None
+                and correction_settings.ideal_programming
+            ):
                 positive_cells.r = np.ones_like(positive_weights) - positive_weights
                 negative_cells.r = np.ones_like(negative_weights) - negative_weights
             else:
@@ -163,13 +166,17 @@ class MemristorConv1d(nn.Module):
                         positive_cells.applyVoltage(
                             pos_mask * (1 - positive_weights) * -2.0
                         )
-                        positive_cells.applyVoltage(pos_mask * (1 - positive_weights) * 2.0)
+                        positive_cells.applyVoltage(
+                            pos_mask * (1 - positive_weights) * 2.0
+                        )
                         negative_cells.applyVoltage(neg_mask * negative_weights * 2.0)
                         negative_cells.applyVoltage(neg_mask * negative_weights * -2.0)
                         negative_cells.applyVoltage(
                             neg_mask * (1 - negative_weights) * -2.0
                         )
-                        negative_cells.applyVoltage(neg_mask * (1 - negative_weights) * 2.0)
+                        negative_cells.applyVoltage(
+                            neg_mask * (1 - negative_weights) * 2.0
+                        )
 
             self.memristors[i].init_from_paired_cell_array_input_major(
                 positive_cells, negative_cells
