@@ -3,14 +3,12 @@ __all__ = [
     "poly_mul_horner",
     "randn_broadcast",
     "compute_correction_factor",
-    "CycleCorrectionSettings",
 ]
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 from torch.utils._triton import has_triton
-from dataclasses import dataclass
 
 
 @torch.compile(disable=not has_triton())
@@ -65,7 +63,7 @@ def randn_broadcast(
     return broadcasted_tensor
 
 
-def compute_correction_factor():
+def compute_correction_factor(ideal: bool = False):
     from ..synaptogen import CellArrayCPU, Iread
 
     correction_factors_paired = []
@@ -87,6 +85,9 @@ def compute_correction_factor():
 
         # applyVoltage(estimation_cells, -2.5)
         estimation_cells.applyVoltage(np.asarray([-2.5] * 100 + [0.0] * 100))
+        if ideal is True:
+            estimation_cells.r[:100] = np.asarray([0.0] * 100)
+            estimation_cells.r[100:] = np.asarray([1.0] * 100)
         correction_factors = []
         correction_factors_nc = []
         for i, check in enumerate(np.arange(0.1, 0.7, 0.1)):
@@ -112,10 +113,3 @@ def compute_correction_factor():
 
     print(f"correction factor paired: {np.mean(correction_factors_paired)}")
     print(f"correction factor single: {np.mean(correction_factors_single)}")
-
-
-@dataclass
-class CycleCorrectionSettings:
-    num_cycles: int  # how often
-    test_input_value: float  # what to feed to check if working
-    relative_deviation: float  # acceptable deviation
