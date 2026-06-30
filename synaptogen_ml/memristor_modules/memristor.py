@@ -3,10 +3,55 @@ from typing import Sequence
 
 import numpy as np
 import torch
+import torch._dynamo
 from torch import nn
 
+from .. import fast_uses_compile, is_fast_inference
 from ..synaptogen import CellArrayCPU
-from .util import poly_mul, randn_broadcast
+from .util import poly_mul, poly_mul_horner, randn_broadcast
+
+
+_COMPILED_FUSED_FORWARD = None
+
+
+def _fused_memristor_forward(
+    low_poly, high_poly, r, inputs, noise_sample, kBT, BW, electron_e, noise_min
+):
+    """Fused memristor forward shared by all MemristorArray instances.
+
+    Algebraically identical to the eager path, evaluated with Horner. The readout
+    noise is passed in (drawn eagerly by the caller) so the random draw matches
+    eager exactly; only kernel fusion / Horner introduce ~1e-6 drift.
+
+    Defined at module level (not as a bound method) on purpose: torch.compile then
+    produces ONE shared graph keyed on tensor shapes, instead of a separate
+    compilation per instance (which guards on ``self``'s id). A model with many
+    arrays would otherwise blow the dynamo cache and silently fall back to eager.
+    """
+    result_low = poly_mul_horner(low_poly, inputs).unsqueeze(-1)
+    result_high = poly_mul_horner(high_poly, inputs).unsqueeze(-1)
+    result_raw = result_low * (1 - r) + result_high * r
+
+    abs_raw = torch.abs(result_raw)
+    denom = torch.abs(inputs.unsqueeze(-1)) + noise_min
+    johnson_noise = 4 * kBT * BW * (abs_raw / denom)
+    shot_noise = 2 * electron_e * abs_raw * BW
+    sigma_total = torch.sqrt(johnson_noise + shot_noise)
+
+    result_noised = result_raw + noise_sample * sigma_total
+    return torch.sum(result_noised, dim=-2)
+
+
+def _get_compiled_fused_forward():
+    """Lazily build (once) the shared compiled fused forward."""
+    global _COMPILED_FUSED_FORWARD
+    if _COMPILED_FUSED_FORWARD is None:
+        # Only a few input ranks (linear vs conv) compile; give dynamo headroom so
+        # they all stay cached rather than falling back to eager.
+        if torch._dynamo.config.cache_size_limit < 64:
+            torch._dynamo.config.cache_size_limit = 64
+        _COMPILED_FUSED_FORWARD = torch.compile(_fused_memristor_forward, dynamic=True)
+    return _COMPILED_FUSED_FORWARD
 
 
 class MemristorArray(nn.Module):
@@ -80,9 +125,10 @@ class MemristorArray(nn.Module):
         """
         result_low = poly_mul(self.resistance_weighted_poly_low, inputs).unsqueeze(-1)
         result_high = poly_mul(self.resistance_weighted_poly_high, inputs).unsqueeze(-1)
-        result_raw = (
-            result_low * (1 - self.r) + result_high * self.r
-        )  # [..., ...A, I, O]
+        # result_low * (1 - r) + result_high * r, accumulated in place to avoid a
+        # second full [..., I, O] temporary. Same arithmetic -> bit-identical.
+        result_raw = result_low * (1 - self.r)  # [..., ...A, I, O]
+        result_raw += result_high * self.r
         return result_raw
 
     def compute_noise(
@@ -94,16 +140,17 @@ class MemristorArray(nn.Module):
         :param inputs: [..., I]
         :return:
         """
+        # abs(result_raw) is needed by both noise terms; compute it once. For the
+        # johnson term the denominator is strictly positive, so
+        # abs(result_raw / denom) == abs(result_raw) / denom exactly in IEEE.
+        abs_raw = torch.abs(result_raw)
         johnson_noise = (
             4
             * self.kBT
             * self.BW
-            * torch.abs(
-                result_raw
-                / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage)
-            )
+            * (abs_raw / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage))
         )
-        shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
+        shot_noise = 2 * self.e * abs_raw * self.BW
         sigma_total = torch.sqrt(johnson_noise + shot_noise)
         noise = randn_broadcast(
             result_raw.shape, self.broadcast_noise_dims, device=inputs.device
@@ -115,14 +162,45 @@ class MemristorArray(nn.Module):
         :param inputs: [...B, I]
         :return: [...B, ...A, O]
         """
+        if is_fast_inference():
+            return self._forward_fast(inputs)
 
         result_raw = self.compute_raw_output(inputs)
         noise = self.compute_noise(result_raw, inputs)
-        result_noised = result_raw + noise
+        # result_raw is no longer needed separately; add the noise in place to save
+        # a full [..., I, O] temporary. Same arithmetic -> bit-identical.
+        result_raw += noise
 
         return torch.sum(
-            result_noised, dim=-2
+            result_raw, dim=-2
         )  # [...B, ...A, I, O] -> sum reduce I -> [...B, ...A, O]
+
+    # -------------------------------------------------------------- fast path ---
+    def _forward_fast(self, inputs: torch.Tensor):
+        # Draw the readout noise eagerly with the SAME trailing shape the eager
+        # path uses: randn_broadcast samples torch.randn(shape[broadcast_dims:]).
+        # Keeping the draw outside the compiled region makes the random numbers
+        # identical to eager, so the only difference is the fused arithmetic.
+        raw_shape = torch.broadcast_shapes(inputs.shape + (1,), self.r.shape)
+        trailing_shape = raw_shape[self.broadcast_noise_dims :]
+        noise_sample = torch.randn(trailing_shape, device=inputs.device)
+
+        forward = (
+            _get_compiled_fused_forward()
+            if fast_uses_compile()
+            else _fused_memristor_forward
+        )
+        return forward(
+            self.resistance_weighted_poly_low,
+            self.resistance_weighted_poly_high,
+            self.r,
+            inputs,
+            noise_sample,
+            self.kBT,
+            self.BW,
+            self.e,
+            self.noise_minimum_voltage,
+        )
 
 
 class PairedMemristorArrayV2(nn.Module):
