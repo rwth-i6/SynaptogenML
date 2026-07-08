@@ -422,8 +422,10 @@ class MemristorConv2d(nn.Module):
         )
 
         inputs = self.converter.dac(inputs * self.input_factor)
-        inputs = inputs.transpose(-2, -1)  # [..., T, F]
-        batch_size, in_channels, time_dim, feature_dim = inputs.shape
+        # input is [B, C, H, W]; unfold H then W directly (no spatial transpose) so
+        # kernel_size[0] aligns with H and kernel_size[1] with W, matching the
+        # [out, in, K0, K1] weight layout.
+        batch_size, in_channels, h_dim, w_dim = inputs.shape
 
         if isinstance(self.padding, tuple):
             padding_amount = self.padding
@@ -435,13 +437,15 @@ class MemristorConv2d(nn.Module):
             raise ValueError(f"Unknown padding mode: {self.padding}")
         if any(x > 0 for x in padding_amount):
             mode = "constant" if self.padding_mode == "zeros" else self.padding_mode
+            # F.pad takes (W_left, W_right, H_left, H_right): pad W by padding[1]
+            # and H by padding[0].
             inputs = F.pad(
                 inputs,
                 (
-                    padding_amount[0],
-                    padding_amount[0],
                     padding_amount[1],
                     padding_amount[1],
+                    padding_amount[0],
+                    padding_amount[0],
                 ),
                 mode=mode,
             )
@@ -490,10 +494,10 @@ class MemristorConv2d(nn.Module):
         mem_out *= self.output_factor
         result = mem_out.reshape(
             batch_size, in1.shape[2], in1.shape[3], self.out_channels
-        )  # [Batch, out_channels, T//S[0], F//S[1]]
+        )  # [B, H', W', O]
         if self.bias is not None:
             result = result + self.bias
-        return result.permute(0, 3, 2, 1)  # [..., O, T']
+        return result.permute(0, 3, 1, 2)  # [B, O, H', W']
 
 
 class SingleKernelMemristorConv2d(nn.Module):
@@ -711,4 +715,8 @@ class SingleKernelMemristorConv2d(nn.Module):
         result = mem_out * self.output_factor
         if self.bias is not None:
             result = result + self.bias
-        return result.permute(0, 3, 1, 2)  # [..., O, T']
+        # mem_out is [B, T1'*T2', O]; restore the 2-D spatial grid before permuting.
+        result = result.reshape(
+            batch_size, in1.shape[2], in1.shape[3], self.out_channels
+        )  # [B, T1', T2', O]
+        return result.permute(0, 3, 1, 2)  # [B, O, T1', T2']
