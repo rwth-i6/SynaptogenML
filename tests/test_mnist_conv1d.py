@@ -170,14 +170,19 @@ class ConvModel(nn.Module):
             self.activation_quant_l1_in,
             self.linear_1,
             num_cycles_init=0,
+            correction_settings=None,
         )
         self.memristor_conv_1.init_from_conv_quant(
-            self.activation_quant_l2_in, self.conv_1, num_cycles_init=self.num_cycles
+            self.activation_quant_l2_in,
+            self.conv_1,
+            num_cycles_init=self.num_cycles,
+            correction_settings=None,
         )
         self.memristor_final.init_from_linear_quant(
             self.activation_quant_final_in,
             self.final_linear,
             num_cycles_init=0,
+            correction_settings=None,
         )
 
 

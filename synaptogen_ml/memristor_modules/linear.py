@@ -2,10 +2,12 @@ __all__ = ["MemristorLinear", "TiledMemristorLinear"]
 import numpy as np
 import torch
 from torch import nn
+from typing import Optional
 
 from ..quant_modules import LinearQuant, ActivationQuantizer
 from ..synaptogen import CellArrayCPU
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
+from .config import CycleCorrectionSettings
 
 
 class MemristorLinear(nn.Module):
@@ -38,8 +40,19 @@ class MemristorLinear(nn.Module):
             self.linear_bias = None
 
     def init_from_linear_quant(
-        self, activation_quant: ActivationQuantizer, linear_quant: LinearQuant
+        self,
+        activation_quant: ActivationQuantizer,
+        linear_quant: LinearQuant,
+        num_cycles_init: int = 0,
+        correction_settings: Optional[CycleCorrectionSettings] = None,
     ):
+        # both should be derivable from TiledMemristorLinear
+        assert num_cycles_init == 0, (
+            "num_cycles_init not implemented for MemristorLinear"
+        )
+        assert correction_settings is None, (
+            "correction_settings not implemented for MemristorLinear"
+        )
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
         self.linear_bias = linear_quant.bias
         # handle weight sign separately because integer division with negative numbers does not work as expected
@@ -161,6 +174,7 @@ class TiledMemristorLinear(nn.Module):
         activation_quant: ActivationQuantizer,
         linear_quant: LinearQuant,
         num_cycles_init: int,
+        correction_settings: Optional[CycleCorrectionSettings],
     ):
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
         self.bias = linear_quant.bias
@@ -217,14 +231,72 @@ class TiledMemristorLinear(nn.Module):
                     size = flat.shape[0]
                     positive_cells = CellArrayCPU(size)
                     negative_cells = CellArrayCPU(size)
-                    for _ in range(num_cycles_init * 15):
-                        positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
-                        negative_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
+                    if (
+                        correction_settings is not None
+                        and correction_settings.ideal_programming
+                    ):
+                        positive_cells.r = (
+                            np.ones_like(positive_weights) - positive_weights
+                        )
+                        negative_cells.r = (
+                            np.ones_like(negative_weights) - negative_weights
+                        )
+                    else:
+                        for _ in range(num_cycles_init * 15):
+                            positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
+                            negative_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
 
-                    positive_cells.applyVoltage(2.0)
-                    negative_cells.applyVoltage(2.0)
-                    positive_cells.applyVoltage(positive_weights * -2.0)
-                    negative_cells.applyVoltage(negative_weights * -2.0)
+                        positive_cells.applyVoltage(2.0)
+                        negative_cells.applyVoltage(2.0)
+                        positive_cells.applyVoltage(positive_weights * -2.0)
+                        negative_cells.applyVoltage(negative_weights * -2.0)
+
+                        if correction_settings is not None:
+                            for _ in range(correction_settings.num_cycles):
+                                tensor = (
+                                    np.ones_like(positive_weights)
+                                    * correction_settings.test_input_value
+                                )
+                                pos = (
+                                    positive_cells.I(tensor)
+                                    * self.converter.hs.hardware_output_current_scaling
+                                )
+                                neg = (
+                                    negative_cells.I(tensor)
+                                    * self.converter.hs.hardware_output_current_scaling
+                                )
+                                pos_dev = np.abs(pos - positive_weights)
+                                neg_dev = np.abs(neg - negative_weights)
+                                pos_mask = (
+                                    pos_dev > correction_settings.relative_deviation
+                                )
+                                neg_mask = (
+                                    neg_dev > correction_settings.relative_deviation
+                                )
+                                positive_cells.applyVoltage(
+                                    pos_mask * positive_weights * 2.0
+                                )
+                                positive_cells.applyVoltage(
+                                    pos_mask * positive_weights * -2.0
+                                )
+                                positive_cells.applyVoltage(
+                                    pos_mask * (1 - positive_weights) * -2.0
+                                )
+                                positive_cells.applyVoltage(
+                                    pos_mask * (1 - positive_weights) * 2.0
+                                )
+                                negative_cells.applyVoltage(
+                                    neg_mask * negative_weights * 2.0
+                                )
+                                negative_cells.applyVoltage(
+                                    neg_mask * negative_weights * -2.0
+                                )
+                                negative_cells.applyVoltage(
+                                    neg_mask * (1 - negative_weights) * -2.0
+                                )
+                                negative_cells.applyVoltage(
+                                    neg_mask * (1 - negative_weights) * 2.0
+                                )
 
                     index = self.get_memristor_index(i, j, k)
 
