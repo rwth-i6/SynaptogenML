@@ -120,6 +120,12 @@ class MemristorArray(nn.Module):
         noise = self.compute_noise(result_raw, inputs)
         result_noised = result_raw + noise
 
+        # optional external measurement hook, set as plain instance attribute;
+        # receives (array, input voltages [...B, I], per-cell currents [...B, ...A, I, O])
+        capture = getattr(self, "current_capture_hook", None)
+        if capture is not None:
+            capture(self, inputs, result_noised)
+
         return torch.sum(
             result_noised, dim=-2
         )  # [...B, ...A, I, O] -> sum reduce I -> [...B, ...A, O]
