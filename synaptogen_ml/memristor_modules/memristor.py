@@ -54,6 +54,44 @@ def _get_compiled_fused_forward():
     return _COMPILED_FUSED_FORWARD
 
 
+@torch.jit.script
+def _jit_fused_core(
+    result_low: torch.Tensor,
+    result_high: torch.Tensor,
+    r: torch.Tensor,
+    abs_in: torch.Tensor,
+    noise_sample: torch.Tensor,
+    kBT: float,
+    BW: float,
+    electron_e: float,
+) -> torch.Tensor:
+    """TorchScript(NNC)-fused fallback for GPUs where torch.compile's Triton
+    backend is unavailable (CUDA capability < 7.0, e.g. GTX 1080 / Pascal).
+
+    Algebraically identical to ``_fused_memristor_forward``'s tail (everything
+    after the Horner evaluation); the caller computes ``result_low``/``result_high``
+    eagerly via ``poly_mul_horner`` first, same as the noise draw is kept eager for
+    the Triton path, so only this elementwise+reduction chain gets scripted.
+    Decorated at module load (not lazily): TorchScript scripting is a one-time AST
+    compile, not per-shape like Inductor, so it has none of the per-instance
+    dynamo-cache-blowup risk that motivated lazily building the compiled forward.
+    """
+    result_raw = result_low * (1 - r) + result_high * r
+    abs_raw = torch.abs(result_raw)
+    johnson_noise = 4 * kBT * BW * (abs_raw / abs_in)
+    shot_noise = 2 * electron_e * abs_raw * BW
+    sigma_total = torch.sqrt(johnson_noise + shot_noise)
+    return torch.sum(result_raw + noise_sample * sigma_total, dim=-2)
+
+
+def _cuda_capability_needs_jit_fallback(device: torch.device) -> bool:
+    """True when torch.compile's Inductor CUDA backend (Triton) is unavailable:
+    a CUDA device with capability < 7.0 (pre-Volta, e.g. GTX 1080 / Pascal)."""
+    if device.type != "cuda":
+        return False
+    return torch.cuda.get_device_capability(device) < (7, 0)
+
+
 class MemristorArray(nn.Module):
     """
     Torch Module for a Memristor Array.
@@ -185,12 +223,41 @@ class MemristorArray(nn.Module):
         trailing_shape = raw_shape[self.broadcast_noise_dims :]
         noise_sample = torch.randn(trailing_shape, device=inputs.device)
 
-        forward = (
-            _get_compiled_fused_forward()
-            if fast_uses_compile()
-            else _fused_memristor_forward
-        )
-        return forward(
+        if not fast_uses_compile():
+            return _fused_memristor_forward(
+                self.resistance_weighted_poly_low,
+                self.resistance_weighted_poly_high,
+                self.r,
+                inputs,
+                noise_sample,
+                self.kBT,
+                self.BW,
+                self.e,
+                self.noise_minimum_voltage,
+            )
+
+        if _cuda_capability_needs_jit_fallback(inputs.device):
+            # Triton (Inductor's CUDA backend) needs capability >= 7.0; fall back to
+            # the TorchScript(NNC)-fused core instead of crashing on pre-Volta GPUs.
+            result_low = poly_mul_horner(
+                self.resistance_weighted_poly_low, inputs
+            ).unsqueeze(-1)
+            result_high = poly_mul_horner(
+                self.resistance_weighted_poly_high, inputs
+            ).unsqueeze(-1)
+            abs_in = torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage
+            return _jit_fused_core(
+                result_low,
+                result_high,
+                self.r,
+                abs_in,
+                noise_sample,
+                float(self.kBT),
+                float(self.BW),
+                float(self.e),
+            )
+
+        return _get_compiled_fused_forward()(
             self.resistance_weighted_poly_low,
             self.resistance_weighted_poly_high,
             self.r,

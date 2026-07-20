@@ -2,9 +2,12 @@
 
 Exposes a process-wide switch for the opt-in *fast inference* path. With it off
 (the default) the memristor modules run a bit-exact eager forward. With it on,
-forwards use a ``torch.compile``-fused implementation that preserves the noise
-model and the random-draw layout but may differ from the eager path by ~1e-6
-(kernel fusion + Horner polynomial evaluation).
+forwards use a fused implementation that preserves the noise model and the
+random-draw layout but may differ from the eager path by ~1e-6 (kernel fusion +
+Horner polynomial evaluation). The fused backend is chosen automatically per
+device: ``torch.compile`` (Triton) on CPU or CUDA capability >= 7.0, or a
+TorchScript(NNC)-fused fallback on older CUDA devices (e.g. GTX 1080 / Pascal)
+where Triton is unavailable — no separate flag needed.
 """
 
 import os
