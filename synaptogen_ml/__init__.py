@@ -27,6 +27,12 @@ _FAST_INFERENCE = _truthy(os.environ.get("SYN_FAST", ""))
 # validate the fast core's numerics without paying compile cost.
 _FAST_COMPILE = not _truthy(os.environ.get("SYN_NO_COMPILE", ""))
 
+# Readout noise (Johnson + shot terms) is part of the simulation and ON by
+# default. SYN_NO_READOUT_NOISE=1 disables it for deterministic inference,
+# e.g. to quantify the WER contribution of readout noise. Programming
+# variability (device programming, cycling) is unaffected.
+_READOUT_NOISE = not _truthy(os.environ.get("SYN_NO_READOUT_NOISE", ""))
+
 
 def set_fast_inference(enabled: bool = True) -> None:
     """Enable (default) or disable the opt-in fast inference path.
@@ -52,3 +58,20 @@ def set_fast_compile(enabled: bool = True) -> None:
 
 def fast_uses_compile() -> bool:
     return _FAST_COMPILE
+
+
+def set_readout_noise(enabled: bool = True) -> None:
+    """Enable (default) or disable the memristor readout noise (Johnson + shot).
+
+    With noise off the forward is deterministic: the raw programmed-cell
+    currents are summed without any random draws (the RNG stream is not
+    consumed at all). Programming variability is unaffected. Works with both
+    the eager and the fast inference path.
+    """
+    global _READOUT_NOISE
+    _READOUT_NOISE = bool(enabled)
+
+
+def has_readout_noise() -> bool:
+    """Whether the readout noise is currently enabled (default True)."""
+    return _READOUT_NOISE
