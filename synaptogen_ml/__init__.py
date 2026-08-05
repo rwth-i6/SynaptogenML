@@ -52,3 +52,27 @@ def set_fast_compile(enabled: bool = True) -> None:
 
 def fast_uses_compile() -> bool:
     return _FAST_COMPILE
+
+
+# Opt-in parallel *programming* (cell conversion) path. 0 (default) = serial,
+# behavior-identical to the historical code. N > 0 programs the independent
+# (bit-plane, tile) cell-array pairs of a layer in N worker processes, each
+# with its own freshly-seeded RNG streams: the physical model and every draw
+# distribution are unchanged, but the individual random numbers differ from a
+# serial run -- exactly as two serial runs differ from each other, since the
+# programming RNG is unseeded. Enable without code changes via:
+#   SYN_FAST_PROG=8 python -m ...
+_FAST_PROGRAMMING_WORKERS = int(os.environ.get("SYN_FAST_PROG", "0") or "0")
+
+
+def set_fast_programming(workers: int) -> None:
+    """Enable the opt-in parallel programming path with ``workers`` processes
+    (0 disables it -> serial default path). See benchmarks/check_programming.py
+    for the statistical-equivalence demonstration."""
+    global _FAST_PROGRAMMING_WORKERS
+    _FAST_PROGRAMMING_WORKERS = int(workers)
+
+
+def fast_programming_workers() -> int:
+    """Number of parallel programming workers (0 = serial default path)."""
+    return _FAST_PROGRAMMING_WORKERS

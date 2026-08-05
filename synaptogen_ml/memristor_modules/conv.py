@@ -1,13 +1,12 @@
 __all__ = ["MemristorConv1d", "MemristorConv2d"]
 from typing import Literal, Tuple, Union, Optional
 
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
 
+from ..programming import program_pairs
 from ..quant_modules import ActivationQuantizer, Conv1DQuant, Conv2dQuant
-from ..synaptogen import CellArrayCPU
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
 from .config import CycleCorrectionSettings
 
@@ -104,6 +103,7 @@ class MemristorConv1d(nn.Module):
             torch.absolute(quant_weights / conv_quant.weight_quantizer.scale)
         ).to(dtype=torch.int32)
 
+        pair_jobs = []
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
             # the weights we want to apply
             quant_weights_scaled_bit = quant_weights_scaled_abs // (2**bit)
@@ -123,61 +123,18 @@ class MemristorConv1d(nn.Module):
             positive_weights = torch.clamp(flat, 0, 1).numpy()
             negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
 
-            # apply negative voltage where a weight is set
-            size = flat.shape[0]
-            positive_cells = CellArrayCPU(size)
-            negative_cells = CellArrayCPU(size)
-            if (
-                correction_settings is not None
-                and correction_settings.ideal_programming
-            ):
-                positive_cells.r = np.ones_like(positive_weights) - positive_weights
-                negative_cells.r = np.ones_like(negative_weights) - negative_weights
-            else:
-                for _ in range(num_cycles_init * 15):
-                    positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
-                    negative_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
+            pair_jobs.append((positive_weights, negative_weights))
 
-                positive_cells.applyVoltage(2.0)
-                negative_cells.applyVoltage(2.0)
-                positive_cells.applyVoltage(positive_weights * -2.0)
-                negative_cells.applyVoltage(negative_weights * -2.0)
-
-                if correction_settings is not None:
-                    for _ in range(correction_settings.num_cycles):
-                        tensor = (
-                            np.ones_like(positive_weights)
-                            * correction_settings.test_input_value
-                        )
-                        pos = (
-                            positive_cells.I(tensor)
-                            * self.converter.hs.hardware_output_current_scaling
-                        )
-                        neg = (
-                            negative_cells.I(tensor)
-                            * self.converter.hs.hardware_output_current_scaling
-                        )
-                        pos_dev = np.abs(pos - positive_weights)
-                        neg_dev = np.abs(neg - negative_weights)
-                        pos_mask = pos_dev > correction_settings.relative_deviation
-                        neg_mask = neg_dev > correction_settings.relative_deviation
-                        positive_cells.applyVoltage(pos_mask * positive_weights * 2.0)
-                        positive_cells.applyVoltage(pos_mask * positive_weights * -2.0)
-                        positive_cells.applyVoltage(
-                            pos_mask * (1 - positive_weights) * -2.0
-                        )
-                        positive_cells.applyVoltage(
-                            pos_mask * (1 - positive_weights) * 2.0
-                        )
-                        negative_cells.applyVoltage(neg_mask * negative_weights * 2.0)
-                        negative_cells.applyVoltage(neg_mask * negative_weights * -2.0)
-                        negative_cells.applyVoltage(
-                            neg_mask * (1 - negative_weights) * -2.0
-                        )
-                        negative_cells.applyVoltage(
-                            neg_mask * (1 - negative_weights) * 2.0
-                        )
-
+        # program all bit-plane pairs via the shared helper (serial default is
+        # step-identical to the former inline code; parallel is opt-in via
+        # synaptogen_ml.set_fast_programming)
+        programmed = program_pairs(
+            pair_jobs,
+            num_cycles_init,
+            correction_settings,
+            self.converter.hs.hardware_output_current_scaling,
+        )
+        for i, (positive_cells, negative_cells) in enumerate(programmed):
             self.memristors[i].init_from_paired_cell_array_input_major(
                 positive_cells, negative_cells
             )
@@ -358,6 +315,7 @@ class MemristorConv2d(nn.Module):
             torch.absolute(quant_weights / conv_quant.weight_quantizer.scale)
         ).to(dtype=torch.int32)
 
+        pair_jobs = []
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
             # the weights we want to apply
             quant_weights_scaled_bit = quant_weights_scaled_abs // (2**bit)
@@ -377,19 +335,18 @@ class MemristorConv2d(nn.Module):
             positive_weights = torch.clamp(flat, 0, 1).numpy()
             negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
 
-            # apply negative voltage where a weight is set
-            size = flat.shape[0]
-            positive_cells = CellArrayCPU(size)
-            negative_cells = CellArrayCPU(size)
-            for _ in range(num_cycles_init * 15):
-                positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
-                negative_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
+            pair_jobs.append((positive_weights, negative_weights))
 
-            positive_cells.applyVoltage(2.0)
-            negative_cells.applyVoltage(2.0)
-            positive_cells.applyVoltage(positive_weights * -2.0)
-            negative_cells.applyVoltage(negative_weights * -2.0)
-
+        # program all bit-plane pairs via the shared helper (serial default is
+        # step-identical to the former inline code; parallel is opt-in via
+        # synaptogen_ml.set_fast_programming)
+        programmed = program_pairs(
+            pair_jobs,
+            num_cycles_init,
+            correction_settings,
+            self.converter.hs.hardware_output_current_scaling,
+        )
+        for i, (positive_cells, negative_cells) in enumerate(programmed):
             self.memristors[i].init_from_paired_cell_array_input_major(
                 positive_cells, negative_cells
             )
@@ -601,6 +558,7 @@ class SingleKernelMemristorConv2d(nn.Module):
             torch.absolute(quant_weights / conv_quant.weight_quantizer.scale)
         ).to(dtype=torch.int32)
 
+        pair_jobs = []
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
             # the weights we want to apply
             quant_weights_scaled_bit = quant_weights_scaled_abs // (2**bit)
@@ -620,19 +578,18 @@ class SingleKernelMemristorConv2d(nn.Module):
             positive_weights = torch.clamp(flat, 0, 1).numpy()
             negative_weights = torch.abs(torch.clamp(flat, -1, 0)).numpy()
 
-            # apply negative voltage where a weight is set
-            size = flat.shape[0]
-            positive_cells = CellArrayCPU(size)
-            negative_cells = CellArrayCPU(size)
-            for _ in range(num_cycles_init * 15):
-                positive_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
-                negative_cells.applyVoltage(np.random.uniform(-2.0, 2.0))
+            pair_jobs.append((positive_weights, negative_weights))
 
-            positive_cells.applyVoltage(2.0)
-            negative_cells.applyVoltage(2.0)
-            positive_cells.applyVoltage(positive_weights * -2.0)
-            negative_cells.applyVoltage(negative_weights * -2.0)
-
+        # program all bit-plane pairs via the shared helper (serial default is
+        # step-identical to the former inline code; parallel is opt-in via
+        # synaptogen_ml.set_fast_programming)
+        programmed = program_pairs(
+            pair_jobs,
+            num_cycles_init,
+            correction_settings,
+            self.converter.hs.hardware_output_current_scaling,
+        )
+        for i, (positive_cells, negative_cells) in enumerate(programmed):
             self.memristors[i].init_from_paired_cell_array_input_major(
                 positive_cells, negative_cells
             )
