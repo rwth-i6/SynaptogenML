@@ -7,6 +7,7 @@ name = "SynaptogenML"
 version = "2025.05"
 description="A library based on Synaptogen and PyTorch enabling the simulation of memristor hardware for machine learning"
 dependencies = [
+    "numpy",
     "torch",
     "pytest"
 ]
@@ -23,8 +24,7 @@ examples = [
     "jupyter"
 ]
 tests = [
-    "pytest",
-    "lovely-tensors"
+    "pytest"
 ]
 
 [tool.setuptools.packages.find]
@@ -35,9 +35,8 @@ pythonpath = [
   "."
 ]
 markers = [
-  "conv: Tests including convolutional layers",
-  "linear: Tests including linear layers",
-  "tiled_linear: Tests including tiled linear layers",
+  "fidelity: Per-layer programming fidelity, memristor output vs quantized reference",
+  "end_to_end: Train a small QAT model, program it, check memristor accuracy",
   "fast: Tests for the opt-in fast inference path",
   "programming: Tests for the cell programming helpers and the opt-in parallel programming path",
 ]

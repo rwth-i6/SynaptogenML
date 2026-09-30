@@ -1,0 +1,29 @@
+name: tests
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        marker: [fidelity, end_to_end, fast, programming]
+    name: tests (${{ matrix.marker }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      - run: |
+          pip install --upgrade pip setuptools wheel
+          # CPU-only torch wheel: a fraction of the CUDA wheel's download size
+          pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: Test (${{ matrix.marker }})
+        run: |
+          python -m pytest tests -m ${{ matrix.marker }}
