@@ -194,11 +194,6 @@ def test_conv1d_depthwise(correction, hw, bound):
 
 
 @pytest.mark.fidelity
-@pytest.mark.xfail(
-    strict=True,
-    reason="MemristorConv2d applies a spatially transposed (H<->W) kernel; "
-    "the non-square kernel here exposes it. Remove this marker with the fix.",
-)
 def test_conv2d():
     # Non-square kernel and padding: only a correctly oriented kernel reproduces
     # the reference shape and values.

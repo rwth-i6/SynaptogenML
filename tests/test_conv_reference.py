@@ -95,7 +95,6 @@ def _run(mem_cls, in_c, out_c, groups):
         return mem(x), ref
 
 
-@pytest.mark.conv2d
 @pytest.mark.fidelity
 @pytest.mark.parametrize(
     "mem_cls, in_c, out_c, groups",
