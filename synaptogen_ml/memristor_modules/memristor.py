@@ -1,12 +1,121 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+import functools
+
 import numpy as np
 import torch
+import torch._dynamo
 from torch import nn
+from torch.utils._triton import has_triton
 
+from .. import fast_uses_compile, is_fast_inference
 from ..synaptogen import CellArrayCPU
-from .util import poly_mul, randn_broadcast
+from .util import poly_mul, poly_mul_horner, randn_broadcast
+
+
+_COMPILED_FUSED_FORWARD = None
+_JIT_FUSED_CORE = None
+
+
+def _fused_memristor_forward(
+    low_poly, high_poly, r, inputs, noise_sample, kBT, BW, electron_e, noise_min
+):
+    """Fused memristor forward shared by all MemristorArray instances.
+
+    Algebraically identical to the eager path, evaluated with Horner. The readout
+    noise is passed in (drawn eagerly by the caller) so the random draw matches
+    eager exactly; only kernel fusion / Horner introduce ~1e-6 drift.
+
+    Defined at module level (not as a bound method) on purpose: torch.compile then
+    produces ONE shared graph keyed on tensor shapes, instead of a separate
+    compilation per instance (which guards on ``self``'s id). A model with many
+    arrays would otherwise blow the dynamo cache and silently fall back to eager.
+    """
+    result_low = poly_mul_horner(low_poly, inputs).unsqueeze(-1)
+    result_high = poly_mul_horner(high_poly, inputs).unsqueeze(-1)
+    result_raw = result_low * (1 - r) + result_high * r
+
+    abs_raw = torch.abs(result_raw)
+    denom = torch.abs(inputs.unsqueeze(-1)) + noise_min
+    johnson_noise = 4 * kBT * BW * (abs_raw / denom)
+    shot_noise = 2 * electron_e * abs_raw * BW
+    sigma_total = torch.sqrt(johnson_noise + shot_noise)
+
+    result_noised = result_raw + noise_sample * sigma_total
+    return torch.sum(result_noised, dim=-2)
+
+
+def _get_compiled_fused_forward():
+    """Lazily build (once) the shared compiled fused forward.
+
+    Compilation is guarded by ``has_triton()`` exactly like ``poly_mul`` in
+    ``util.py``: without a Triton-capable CUDA device (CPU, or CUDA capability
+    < 7.0) ``torch.compile`` is disabled and the fused forward simply runs eagerly.
+    This keeps CPU runs free of Inductor's C++ compile cost and toolchain
+    dependency.
+
+    Side effect: on first use this raises the process-wide
+    ``torch._dynamo.config.cache_size_limit`` to at least 64 so the few distinct
+    input ranks (linear vs conv) all stay cached instead of falling back to eager.
+    """
+    global _COMPILED_FUSED_FORWARD
+    if _COMPILED_FUSED_FORWARD is None:
+        compile_enabled = has_triton()
+        if compile_enabled and torch._dynamo.config.cache_size_limit < 64:
+            torch._dynamo.config.cache_size_limit = 64
+        _COMPILED_FUSED_FORWARD = torch.compile(
+            _fused_memristor_forward, dynamic=True, disable=not compile_enabled
+        )
+    return _COMPILED_FUSED_FORWARD
+
+
+def _jit_fused_core(
+    result_low: torch.Tensor,
+    result_high: torch.Tensor,
+    r: torch.Tensor,
+    abs_in: torch.Tensor,
+    noise_sample: torch.Tensor,
+    kBT: float,
+    BW: float,
+    electron_e: float,
+) -> torch.Tensor:
+    """TorchScript(NNC)-fused fallback for GPUs where torch.compile's Triton
+    backend is unavailable (CUDA capability < 7.0, e.g. GTX 1080 / Pascal).
+
+    Algebraically identical to ``_fused_memristor_forward``'s tail (everything
+    after the Horner evaluation); the caller computes ``result_low``/``result_high``
+    eagerly via ``poly_mul_horner`` first, same as the noise draw is kept eager for
+    the Triton path, so only this elementwise+reduction chain gets scripted.
+    Scripted lazily via ``_get_jit_fused_core`` so that a TorchScript failure (it is
+    in maintenance mode in newer torch releases) only affects the fast path on
+    pre-Triton GPUs, not importing this module.
+    """
+    result_raw = result_low * (1 - r) + result_high * r
+    abs_raw = torch.abs(result_raw)
+    johnson_noise = 4 * kBT * BW * (abs_raw / abs_in)
+    shot_noise = 2 * electron_e * abs_raw * BW
+    sigma_total = torch.sqrt(johnson_noise + shot_noise)
+    return torch.sum(result_raw + noise_sample * sigma_total, dim=-2)
+
+
+def _get_jit_fused_core():
+    """Lazily TorchScript-compile (once) ``_jit_fused_core``."""
+    global _JIT_FUSED_CORE
+    if _JIT_FUSED_CORE is None:
+        _JIT_FUSED_CORE = torch.jit.script(_jit_fused_core)
+    return _JIT_FUSED_CORE
+
+
+@functools.lru_cache(maxsize=None)
+def _cuda_capability_needs_jit_fallback(device: torch.device) -> bool:
+    """True when torch.compile's Inductor CUDA backend (Triton) is unavailable:
+    a CUDA device with capability < 7.0 (pre-Volta, e.g. GTX 1080 / Pascal).
+
+    Cached per device so the capability query is not repeated on every forward."""
+    if device.type != "cuda":
+        return False
+    return torch.cuda.get_device_capability(device) < (7, 0)
 
 
 class MemristorArray(nn.Module):
@@ -80,9 +189,10 @@ class MemristorArray(nn.Module):
         """
         result_low = poly_mul(self.resistance_weighted_poly_low, inputs).unsqueeze(-1)
         result_high = poly_mul(self.resistance_weighted_poly_high, inputs).unsqueeze(-1)
-        result_raw = (
-            result_low * (1 - self.r) + result_high * self.r
-        )  # [..., ...A, I, O]
+        # result_low * (1 - r) + result_high * r, accumulated in place to avoid a
+        # second full [..., I, O] temporary. Same arithmetic -> bit-identical.
+        result_raw = result_low * (1 - self.r)  # [..., ...A, I, O]
+        result_raw += result_high * self.r
         return result_raw
 
     def compute_noise(
@@ -94,16 +204,17 @@ class MemristorArray(nn.Module):
         :param inputs: [..., I]
         :return:
         """
+        # abs(result_raw) is needed by both noise terms; compute it once. For the
+        # johnson term the denominator is strictly positive, so
+        # abs(result_raw / denom) == abs(result_raw) / denom exactly in IEEE.
+        abs_raw = torch.abs(result_raw)
         johnson_noise = (
             4
             * self.kBT
             * self.BW
-            * torch.abs(
-                result_raw
-                / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage)
-            )
+            * (abs_raw / (torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage))
         )
-        shot_noise = 2 * self.e * torch.abs(result_raw) * self.BW
+        shot_noise = 2 * self.e * abs_raw * self.BW
         sigma_total = torch.sqrt(johnson_noise + shot_noise)
         noise = randn_broadcast(
             result_raw.shape, self.broadcast_noise_dims, device=inputs.device
@@ -115,14 +226,79 @@ class MemristorArray(nn.Module):
         :param inputs: [...B, I]
         :return: [...B, ...A, O]
         """
+        if is_fast_inference():
+            return self._forward_fast(inputs)
 
         result_raw = self.compute_raw_output(inputs)
         noise = self.compute_noise(result_raw, inputs)
-        result_noised = result_raw + noise
+        if result_raw.requires_grad:
+            # compute_noise saved abs(result_raw) for backward; an in-place add
+            # here would raise on backward, so stay out of place under autograd.
+            result_raw = result_raw + noise
+        else:
+            # Inference: add the noise in place to save a full [..., I, O]
+            # temporary. Same arithmetic -> bit-identical to the out-of-place add.
+            result_raw += noise
 
         return torch.sum(
-            result_noised, dim=-2
+            result_raw, dim=-2
         )  # [...B, ...A, I, O] -> sum reduce I -> [...B, ...A, O]
+
+    # -------------------------------------------------------------- fast path ---
+    def _forward_fast(self, inputs: torch.Tensor):
+        # Draw the readout noise eagerly with the SAME trailing shape the eager
+        # path uses: randn_broadcast samples torch.randn(shape[broadcast_dims:]).
+        # Keeping the draw outside the compiled region makes the random numbers
+        # identical to eager, so the only difference is the fused arithmetic.
+        raw_shape = torch.broadcast_shapes(inputs.shape + (1,), self.r.shape)
+        trailing_shape = raw_shape[self.broadcast_noise_dims :]
+        noise_sample = torch.randn(trailing_shape, device=inputs.device)
+
+        if not fast_uses_compile():
+            return _fused_memristor_forward(
+                self.resistance_weighted_poly_low,
+                self.resistance_weighted_poly_high,
+                self.r,
+                inputs,
+                noise_sample,
+                self.kBT,
+                self.BW,
+                self.e,
+                self.noise_minimum_voltage,
+            )
+
+        if _cuda_capability_needs_jit_fallback(inputs.device):
+            # Triton (Inductor's CUDA backend) needs capability >= 7.0; fall back to
+            # the TorchScript(NNC)-fused core instead of crashing on pre-Volta GPUs.
+            result_low = poly_mul_horner(
+                self.resistance_weighted_poly_low, inputs
+            ).unsqueeze(-1)
+            result_high = poly_mul_horner(
+                self.resistance_weighted_poly_high, inputs
+            ).unsqueeze(-1)
+            abs_in = torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage
+            return _get_jit_fused_core()(
+                result_low,
+                result_high,
+                self.r,
+                abs_in,
+                noise_sample,
+                float(self.kBT),
+                float(self.BW),
+                float(self.e),
+            )
+
+        return _get_compiled_fused_forward()(
+            self.resistance_weighted_poly_low,
+            self.resistance_weighted_poly_high,
+            self.r,
+            inputs,
+            noise_sample,
+            self.kBT,
+            self.BW,
+            self.e,
+            self.noise_minimum_voltage,
+        )
 
 
 class PairedMemristorArrayV2(nn.Module):
