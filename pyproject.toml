@@ -39,4 +39,5 @@ markers = [
   "linear: Tests including linear layers",
   "tiled_linear: Tests including tiled linear layers",
   "fast: Tests for the opt-in fast inference path",
+  "programming: Tests for the cell programming helpers and the opt-in parallel programming path",
 ]
