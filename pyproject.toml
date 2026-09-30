@@ -7,6 +7,7 @@ name = "SynaptogenML"
 version = "2025.05"
 description="A library based on Synaptogen and PyTorch enabling the simulation of memristor hardware for machine learning"
 dependencies = [
+    "numpy",
     "torch",
     "pytest"
 ]
