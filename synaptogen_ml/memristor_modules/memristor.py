@@ -205,9 +205,14 @@ class MemristorArray(nn.Module):
 
         result_raw = self.compute_raw_output(inputs)
         noise = self.compute_noise(result_raw, inputs)
-        # result_raw is no longer needed separately; add the noise in place to save
-        # a full [..., I, O] temporary. Same arithmetic -> bit-identical.
-        result_raw += noise
+        if result_raw.requires_grad:
+            # compute_noise saved abs(result_raw) for backward; an in-place add
+            # here would raise on backward, so stay out of place under autograd.
+            result_raw = result_raw + noise
+        else:
+            # Inference: add the noise in place to save a full [..., I, O]
+            # temporary. Same arithmetic -> bit-identical to the out-of-place add.
+            result_raw += noise
 
         return torch.sum(
             result_raw, dim=-2
