@@ -412,8 +412,8 @@ class MemristorConv2d(nn.Module):
         """
         Applies 2d-convolution.
 
-        :param inputs: [..., F, T]
-        :return: [..., F', T']
+        :param inputs: [B, C, H, W]
+        :return: [B, C', H', W']
         """
         assert self.initialized
         assert not self.output_factor == 1.0, (
@@ -482,7 +482,8 @@ class MemristorConv2d(nn.Module):
         mem_out = self.converter.adc(
             out
         )  # [Batch, T//S[0] * F//S[1], out_channels//groups]
-        for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
+        # memristors[-1] (bit 0) is already in mem_out; add only the higher planes
+        for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
             out = (
                 self.memristors[i]
                 .forward(in4)
@@ -709,7 +710,8 @@ class SingleKernelMemristorConv2d(nn.Module):
             in4
         )  # [Batch, T//S[0] * F//S[1], out_channels]
         mem_out = self.converter.adc(out)  # [Batch, T//S[0] * F//S[1], out_channels]
-        for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
+        # memristors[-1] (bit 0) is already in mem_out; add only the higher planes
+        for i, bit in enumerate(reversed(range(1, self.weight_precision - 1))):
             out = self.memristors[i].forward(in4)
             mem_out += self.converter.adc(out) * (2 ** (bit))
         result = mem_out * self.output_factor
