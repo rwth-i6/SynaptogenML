@@ -16,14 +16,20 @@ Fast programming changes which random numbers each cell draws -- every pair is
 programmed from an independent, freshly-seeded RNG stream -- but not the
 distributions those numbers are drawn from. Statistically the result is
 indistinguishable from a serial re-run (and the default programming RNG is
-unseeded, so two serial runs never were bit-identical either). See
-``benchmarks/check_programming.py`` for the empirical demonstration.
+unseeded, so two serial runs never were bit-identical either); see
+``tests/test_programming.py``.
 
 This module must stay importable without torch: worker processes import only
 this module (numpy + the Synaptogen cell model).
+
+The worker pool uses the ``spawn`` start method, which re-imports the calling
+script's ``__main__`` module in every worker. Scripts that enable fast
+programming therefore need the usual ``if __name__ == "__main__":`` guard
+around their top-level code (RETURNN's entry point already has one).
 """
 
 import os
+import time
 from collections import namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -200,8 +206,11 @@ _BLAS_ENV_VARS = (
 )
 
 
-def _noop(_):
-    return None
+def _wait_worker(seconds: float):
+    # keeps a worker busy so the next warm-up task cannot reuse it, forcing the
+    # pool to spawn a distinct process per task
+    time.sleep(seconds)
+    return os.getpid()
 
 
 def _get_pool(workers: int) -> ProcessPoolExecutor:
@@ -220,8 +229,15 @@ def _get_pool(workers: int) -> ProcessPoolExecutor:
             _pool = ProcessPoolExecutor(
                 max_workers=workers, mp_context=get_context("spawn")
             )
-            # force all workers to spawn now, while the env is in place
-            list(_pool.map(_noop, range(workers)))
+            # Force all workers to spawn now, while the env is in place. The pool
+            # spawns processes on demand and reuses idle ones, so a warm-up task
+            # that finishes before the next is submitted would leave stragglers
+            # to spawn later, without the single-thread env. Each warm-up task
+            # blocks briefly so no worker is idle; repeat until every worker
+            # has reported a distinct pid.
+            pids = set()
+            while len(pids) < workers:
+                pids |= set(_pool.map(_wait_worker, [0.2] * workers))
         finally:
             for var, value in saved.items():
                 if value is None:

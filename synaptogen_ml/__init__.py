@@ -72,8 +72,9 @@ _FAST_PROGRAMMING_WORKERS = int(os.environ.get("SYN_FAST_PROG", "0") or "0")
 
 def set_fast_programming(workers: int) -> None:
     """Enable the opt-in parallel programming path with ``workers`` processes
-    (0 disables it -> serial default path). See benchmarks/check_programming.py
-    for the statistical-equivalence demonstration."""
+    (0 disables it -> serial default path). The workers are spawned, so the
+    calling script needs an ``if __name__ == "__main__":`` guard. See
+    ``synaptogen_ml.programming`` for details."""
     global _FAST_PROGRAMMING_WORKERS
     _FAST_PROGRAMMING_WORKERS = int(workers)
 
