@@ -5,9 +5,13 @@ Exposes a process-wide switch for the opt-in *fast inference* path. With it off
 forwards use a fused implementation that preserves the noise model and the
 random-draw layout but may differ from the eager path by ~1e-6 (kernel fusion +
 Horner polynomial evaluation). The fused backend is chosen automatically per
-device: ``torch.compile`` (Triton) on CPU or CUDA capability >= 7.0, or a
+device: ``torch.compile`` (Triton) on CUDA capability >= 7.0, a
 TorchScript(NNC)-fused fallback on older CUDA devices (e.g. GTX 1080 / Pascal)
-where Triton is unavailable — no separate flag needed.
+where Triton is unavailable, and plain eager execution of the fused function on
+CPU (same ``has_triton()`` guard as ``poly_mul``) — no separate flag needed.
+
+Note: the first compiled forward raises ``torch._dynamo.config.cache_size_limit``
+process-wide (to at least 64) so all input ranks stay cached.
 """
 
 import os
@@ -51,4 +55,5 @@ def set_fast_compile(enabled: bool = True) -> None:
 
 
 def fast_uses_compile() -> bool:
+    """Whether the fast path torch.compiles its forward (see ``set_fast_compile``)."""
     return _FAST_COMPILE

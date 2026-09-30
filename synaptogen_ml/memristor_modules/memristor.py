@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+import functools
+
 import numpy as np
 import torch
 import torch._dynamo
 from torch import nn
+from torch.utils._triton import has_triton
 
 from .. import fast_uses_compile, is_fast_inference
 from ..synaptogen import CellArrayCPU
@@ -12,6 +15,7 @@ from .util import poly_mul, poly_mul_horner, randn_broadcast
 
 
 _COMPILED_FUSED_FORWARD = None
+_JIT_FUSED_CORE = None
 
 
 def _fused_memristor_forward(
@@ -43,18 +47,29 @@ def _fused_memristor_forward(
 
 
 def _get_compiled_fused_forward():
-    """Lazily build (once) the shared compiled fused forward."""
+    """Lazily build (once) the shared compiled fused forward.
+
+    Compilation is guarded by ``has_triton()`` exactly like ``poly_mul`` in
+    ``util.py``: without a Triton-capable CUDA device (CPU, or CUDA capability
+    < 7.0) ``torch.compile`` is disabled and the fused forward simply runs eagerly.
+    This keeps CPU runs free of Inductor's C++ compile cost and toolchain
+    dependency.
+
+    Side effect: on first use this raises the process-wide
+    ``torch._dynamo.config.cache_size_limit`` to at least 64 so the few distinct
+    input ranks (linear vs conv) all stay cached instead of falling back to eager.
+    """
     global _COMPILED_FUSED_FORWARD
     if _COMPILED_FUSED_FORWARD is None:
-        # Only a few input ranks (linear vs conv) compile; give dynamo headroom so
-        # they all stay cached rather than falling back to eager.
-        if torch._dynamo.config.cache_size_limit < 64:
+        compile_enabled = has_triton()
+        if compile_enabled and torch._dynamo.config.cache_size_limit < 64:
             torch._dynamo.config.cache_size_limit = 64
-        _COMPILED_FUSED_FORWARD = torch.compile(_fused_memristor_forward, dynamic=True)
+        _COMPILED_FUSED_FORWARD = torch.compile(
+            _fused_memristor_forward, dynamic=True, disable=not compile_enabled
+        )
     return _COMPILED_FUSED_FORWARD
 
 
-@torch.jit.script
 def _jit_fused_core(
     result_low: torch.Tensor,
     result_high: torch.Tensor,
@@ -72,9 +87,9 @@ def _jit_fused_core(
     after the Horner evaluation); the caller computes ``result_low``/``result_high``
     eagerly via ``poly_mul_horner`` first, same as the noise draw is kept eager for
     the Triton path, so only this elementwise+reduction chain gets scripted.
-    Decorated at module load (not lazily): TorchScript scripting is a one-time AST
-    compile, not per-shape like Inductor, so it has none of the per-instance
-    dynamo-cache-blowup risk that motivated lazily building the compiled forward.
+    Scripted lazily via ``_get_jit_fused_core`` so that a TorchScript failure (it is
+    in maintenance mode in newer torch releases) only affects the fast path on
+    pre-Triton GPUs, not importing this module.
     """
     result_raw = result_low * (1 - r) + result_high * r
     abs_raw = torch.abs(result_raw)
@@ -84,9 +99,20 @@ def _jit_fused_core(
     return torch.sum(result_raw + noise_sample * sigma_total, dim=-2)
 
 
+def _get_jit_fused_core():
+    """Lazily TorchScript-compile (once) ``_jit_fused_core``."""
+    global _JIT_FUSED_CORE
+    if _JIT_FUSED_CORE is None:
+        _JIT_FUSED_CORE = torch.jit.script(_jit_fused_core)
+    return _JIT_FUSED_CORE
+
+
+@functools.lru_cache(maxsize=None)
 def _cuda_capability_needs_jit_fallback(device: torch.device) -> bool:
     """True when torch.compile's Inductor CUDA backend (Triton) is unavailable:
-    a CUDA device with capability < 7.0 (pre-Volta, e.g. GTX 1080 / Pascal)."""
+    a CUDA device with capability < 7.0 (pre-Volta, e.g. GTX 1080 / Pascal).
+
+    Cached per device so the capability query is not repeated on every forward."""
     if device.type != "cuda":
         return False
     return torch.cuda.get_device_capability(device) < (7, 0)
@@ -251,7 +277,7 @@ class MemristorArray(nn.Module):
                 self.resistance_weighted_poly_high, inputs
             ).unsqueeze(-1)
             abs_in = torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage
-            return _jit_fused_core(
+            return _get_jit_fused_core()(
                 result_low,
                 result_high,
                 self.r,
