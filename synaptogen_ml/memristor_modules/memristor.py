@@ -9,13 +9,28 @@ import torch._dynamo
 from torch import nn
 from torch.utils._triton import has_triton
 
-from .. import fast_uses_compile, is_fast_inference
+from .. import (
+    fast_uses_compile,
+    has_readout_noise,
+    is_fast_inference,
+    readout_noise_model,
+)
 from ..synaptogen import CellArrayCPU
 from .util import poly_mul, poly_mul_horner, randn_broadcast
 
 
 _COMPILED_FUSED_FORWARD = None
+_COMPILED_FUSED_FORWARD_NOISELESS = None
 _JIT_FUSED_CORE = None
+_JIT_FUSED_CORE_NOISELESS = None
+
+# (bandwidth BW, electron charge e) per readout-noise model, see synaptogen_ml/__init__.py.
+# "legacy" keeps the exact historical objects (float 1e-8, numpy float64 exp(1)) so its
+# arithmetic stays bit-identical to the code before the models were introduced.
+_READOUT_NOISE_CONSTANTS = {
+    "legacy": (1e-8, np.exp(1)),
+    "physical": (1e8, 1.602176634e-19),
+}
 
 
 def _fused_memristor_forward(
@@ -70,6 +85,37 @@ def _get_compiled_fused_forward():
     return _COMPILED_FUSED_FORWARD
 
 
+def _fused_memristor_forward_noiseless(low_poly, high_poly, r, inputs):
+    """Noise-free counterpart of ``_fused_memristor_forward`` (readout noise model
+    ``"off"``): deterministic sum of the raw cell currents, no random draws.
+    Module-level for the same shared-graph reason as the noisy forward."""
+    result_low = poly_mul_horner(low_poly, inputs).unsqueeze(-1)
+    result_high = poly_mul_horner(high_poly, inputs).unsqueeze(-1)
+    result_raw = result_low * (1 - r) + result_high * r
+    return torch.sum(result_raw, dim=-2)
+
+
+def _get_compiled_fused_forward_noiseless():
+    """Lazily build (once) the shared compiled noise-free fused forward.
+
+    A separate compiled function (not a flag into the noisy forward), so switching
+    the noise model never invalidates or re-guards the noisy graph. Same
+    ``has_triton()`` guard and cache-size side effect as
+    ``_get_compiled_fused_forward``.
+    """
+    global _COMPILED_FUSED_FORWARD_NOISELESS
+    if _COMPILED_FUSED_FORWARD_NOISELESS is None:
+        compile_enabled = has_triton()
+        if compile_enabled and torch._dynamo.config.cache_size_limit < 64:
+            torch._dynamo.config.cache_size_limit = 64
+        _COMPILED_FUSED_FORWARD_NOISELESS = torch.compile(
+            _fused_memristor_forward_noiseless,
+            dynamic=True,
+            disable=not compile_enabled,
+        )
+    return _COMPILED_FUSED_FORWARD_NOISELESS
+
+
 def _jit_fused_core(
     result_low: torch.Tensor,
     result_high: torch.Tensor,
@@ -105,6 +151,24 @@ def _get_jit_fused_core():
     if _JIT_FUSED_CORE is None:
         _JIT_FUSED_CORE = torch.jit.script(_jit_fused_core)
     return _JIT_FUSED_CORE
+
+
+def _jit_fused_core_noiseless(
+    result_low: torch.Tensor,
+    result_high: torch.Tensor,
+    r: torch.Tensor,
+) -> torch.Tensor:
+    """Noise-free counterpart of ``_jit_fused_core`` for pre-Triton GPUs."""
+    result_raw = result_low * (1 - r) + result_high * r
+    return torch.sum(result_raw, dim=-2)
+
+
+def _get_jit_fused_core_noiseless():
+    """Lazily TorchScript-compile (once) ``_jit_fused_core_noiseless``."""
+    global _JIT_FUSED_CORE_NOISELESS
+    if _JIT_FUSED_CORE_NOISELESS is None:
+        _JIT_FUSED_CORE_NOISELESS = torch.jit.script(_jit_fused_core_noiseless)
+    return _JIT_FUSED_CORE_NOISELESS
 
 
 @functools.lru_cache(maxsize=None)
@@ -158,15 +222,29 @@ class MemristorArray(nn.Module):
         self.low_degree = low_degree
         self.high_degree = high_degree
 
-        self.BW = 1e-8  # Default Constant
+        # BW and e are properties: they follow the process-wide readout-noise model
+        # (synaptogen_ml.set_readout_noise_model), looked up at every forward.
         self.kBT = 1.380649e-23 * 300  # Default Constant
         self.noise_minimum_voltage = 1e-12
-        self.e = np.exp(1)
         assert broadcast_noise_dims >= 0
         self.broadcast_noise_dims = broadcast_noise_dims
 
         self.in_features = in_features
         self.out_features = out_features
+
+    @property
+    def BW(self):
+        """Readout bandwidth of the current readout-noise model (unused for "off")."""
+        return _READOUT_NOISE_CONSTANTS.get(
+            readout_noise_model(), _READOUT_NOISE_CONSTANTS["legacy"]
+        )[0]
+
+    @property
+    def e(self):
+        """Electron charge of the current readout-noise model (unused for "off")."""
+        return _READOUT_NOISE_CONSTANTS.get(
+            readout_noise_model(), _READOUT_NOISE_CONSTANTS["legacy"]
+        )[1]
 
     def init_resistance_states(self, cells: CellArrayCPU):
         LLRS = torch.Tensor(cells.params.LLRS)
@@ -230,6 +308,9 @@ class MemristorArray(nn.Module):
             return self._forward_fast(inputs)
 
         result_raw = self.compute_raw_output(inputs)
+        if not has_readout_noise():
+            # readout noise "off": deterministic, no random draws at all
+            return torch.sum(result_raw, dim=-2)
         noise = self.compute_noise(result_raw, inputs)
         if result_raw.requires_grad:
             # compute_noise saved abs(result_raw) for backward; an in-place add
@@ -246,6 +327,9 @@ class MemristorArray(nn.Module):
 
     # -------------------------------------------------------------- fast path ---
     def _forward_fast(self, inputs: torch.Tensor):
+        if not has_readout_noise():
+            return self._forward_fast_noiseless(inputs)
+
         # Draw the readout noise eagerly with the SAME trailing shape the eager
         # path uses: randn_broadcast samples torch.randn(shape[broadcast_dims:]).
         # Keeping the draw outside the compiled region makes the random numbers
@@ -298,6 +382,33 @@ class MemristorArray(nn.Module):
             self.BW,
             self.e,
             self.noise_minimum_voltage,
+        )
+
+    def _forward_fast_noiseless(self, inputs: torch.Tensor):
+        # Readout noise "off": no random draws, so the RNG stream is left untouched
+        # and runs that toggle the noise stay seed-comparable.
+        if not fast_uses_compile():
+            return _fused_memristor_forward_noiseless(
+                self.resistance_weighted_poly_low,
+                self.resistance_weighted_poly_high,
+                self.r,
+                inputs,
+            )
+
+        if _cuda_capability_needs_jit_fallback(inputs.device):
+            result_low = poly_mul_horner(
+                self.resistance_weighted_poly_low, inputs
+            ).unsqueeze(-1)
+            result_high = poly_mul_horner(
+                self.resistance_weighted_poly_high, inputs
+            ).unsqueeze(-1)
+            return _get_jit_fused_core_noiseless()(result_low, result_high, self.r)
+
+        return _get_compiled_fused_forward_noiseless()(
+            self.resistance_weighted_poly_low,
+            self.resistance_weighted_poly_high,
+            self.r,
+            inputs,
         )
 
 

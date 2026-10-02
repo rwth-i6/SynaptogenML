@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        marker: [fidelity, end_to_end, fast, programming]
+        marker: [fidelity, end_to_end, fast, programming, readout]
     name: tests (${{ matrix.marker }})
     steps:
       - uses: actions/checkout@v4

@@ -39,4 +39,5 @@ markers = [
   "end_to_end: Train a small QAT model, program it, check memristor accuracy",
   "fast: Tests for the opt-in fast inference path",
   "programming: Tests for the cell programming helpers and the opt-in parallel programming path",
+  "readout: Tests for the selectable readout-noise models (legacy / physical / off)",
 ]

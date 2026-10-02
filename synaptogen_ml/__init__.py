@@ -12,6 +12,10 @@ CPU (same ``has_triton()`` guard as ``poly_mul``) — no separate flag needed.
 
 Note: the first compiled forward raises ``torch._dynamo.config.cache_size_limit``
 process-wide (to at least 64) so all input ranks stay cached.
+
+A second switch selects the readout-noise model (``set_readout_noise_model``):
+``"legacy"`` (default, historical constants), ``"physical"`` (upstream Synaptogen
+constants) or ``"off"``. See the comment above ``READOUT_NOISE_MODELS``.
 """
 
 import os
@@ -57,6 +61,63 @@ def set_fast_compile(enabled: bool = True) -> None:
 def fast_uses_compile() -> bool:
     """Whether the fast path torch.compiles its forward (see ``set_fast_compile``)."""
     return _FAST_COMPILE
+
+
+# Readout-noise model of ``MemristorArray`` (Johnson + shot noise at inference):
+#   "legacy"   (default) historical constants: electron charge e = Euler's number and
+#              bandwidth BW = 1e-8, a port typo of upstream Synaptogen. The Johnson term
+#              is ~0 and the shot-noise sigma ~37x the physical value. Kept as default
+#              so existing results reproduce bit-exactly.
+#   "physical" upstream Synaptogen constants (e = 1.602176634e-19 C, BW = 1e8 Hz), the
+#              same values as the numpy cell model (``synaptogen.Iread``).
+#   "off"      no readout noise: deterministic forward, no random draws at all.
+# Programming variability (device-to-device, cycle-to-cycle) is unaffected by all modes.
+# Select without code changes via:
+#   SYN_READOUT_NOISE_MODEL=physical python -m ...
+READOUT_NOISE_MODELS = ("legacy", "physical", "off")
+
+
+def _check_readout_noise_model(model: str) -> str:
+    if model not in READOUT_NOISE_MODELS:
+        raise ValueError(
+            f"Unknown readout noise model {model!r}, expected one of {READOUT_NOISE_MODELS}"
+        )
+    return model
+
+
+_READOUT_NOISE_MODEL = _check_readout_noise_model(
+    os.environ.get("SYN_READOUT_NOISE_MODEL", "").strip().lower() or "legacy"
+)
+
+
+def set_readout_noise_model(model: str) -> None:
+    """Select the readout-noise model (``"legacy"``, ``"physical"`` or ``"off"``).
+
+    Process-wide and read at every forward, so it may be changed between forwards
+    of an already constructed/programmed model.
+    """
+    global _READOUT_NOISE_MODEL
+    _READOUT_NOISE_MODEL = _check_readout_noise_model(model)
+
+
+def readout_noise_model() -> str:
+    """The currently selected readout-noise model (default ``"legacy"``)."""
+    return _READOUT_NOISE_MODEL
+
+
+def set_readout_noise(enabled: bool = True) -> None:
+    """Shorthand: ``False`` selects ``"off"``; ``True`` re-enables the noise, going
+    back to ``"legacy"`` if it was off (an explicitly chosen ``"physical"`` stays)."""
+    global _READOUT_NOISE_MODEL
+    if not enabled:
+        _READOUT_NOISE_MODEL = "off"
+    elif _READOUT_NOISE_MODEL == "off":
+        _READOUT_NOISE_MODEL = "legacy"
+
+
+def has_readout_noise() -> bool:
+    """Whether the readout noise is applied (any model except ``"off"``)."""
+    return _READOUT_NOISE_MODEL != "off"
 
 
 # Opt-in parallel *programming* (cell conversion) path. 0 (default) = serial,
