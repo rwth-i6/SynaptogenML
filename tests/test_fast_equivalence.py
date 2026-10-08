@@ -12,7 +12,11 @@ import pytest
 import torch
 
 import synaptogen_ml
-from synaptogen_ml.memristor_modules.conv import MemristorConv1d, MemristorConv2d
+from synaptogen_ml.memristor_modules.conv import (
+    MemristorConv1d,
+    MemristorConv2d,
+    TiledMemristorConv2d,
+)
 from synaptogen_ml.memristor_modules.linear import (
     MemristorLinear,
     TiledMemristorLinear,
@@ -166,9 +170,41 @@ def build_conv2d():
     return mem.eval(), x
 
 
+def build_tiled_conv2d():
+    conv = Conv2dQuant(
+        in_channels=2,
+        out_channels=8,
+        kernel_size=3,
+        stride=2,
+        padding=1,
+        dilation=1,
+        groups=1,
+        **_QUANT_KW,
+    )
+    act = _act_quant()
+    x = torch.randn(2, 2, 12, 12)
+    _calibrate(conv, act, x)
+    mem = TiledMemristorConv2d(  # 18 rows -> 3 tiles of 8, 8 outputs -> 2 tiles of 4
+        in_channels=2,
+        out_channels=8,
+        kernel_size=3,
+        stride=2,
+        padding=1,
+        groups=1,
+        weight_precision=WEIGHT_PRECISION,
+        converter_hardware_settings=_hw(),
+        memristor_inputs=8,
+        memristor_outputs=4,
+        bias=False,
+    )
+    mem.init_from_conv_quant(act, conv, num_cycles_init=0, correction_settings=None)
+    return mem.eval(), x
+
+
 @pytest.mark.fast
 @pytest.mark.parametrize(
-    "build", [build_linear, build_tiled_linear, build_conv1d, build_conv2d]
+    "build",
+    [build_linear, build_tiled_linear, build_conv1d, build_conv2d, build_tiled_conv2d],
 )
 def test_fast_path_matches_eager_no_compile(build):
     """Run the eager and the fast path on the same programmed instance, reseeding

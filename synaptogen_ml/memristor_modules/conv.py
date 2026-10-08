@@ -1,4 +1,4 @@
-__all__ = ["MemristorConv1d", "MemristorConv2d"]
+__all__ = ["MemristorConv1d", "MemristorConv2d", "TiledMemristorConv2d"]
 from typing import Literal, Tuple, Union, Optional
 
 import torch
@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from ..programming import program_pairs
 from ..quant_modules import ActivationQuantizer, Conv1DQuant, Conv2dQuant
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
+from .linear import TiledMemristorLinear
 from .config import CycleCorrectionSettings
 
 
@@ -679,3 +680,165 @@ class SingleKernelMemristorConv2d(nn.Module):
             batch_size, in1.shape[2], in1.shape[3], self.out_channels
         )  # [B, T1', T2', O]
         return result.permute(0, 3, 1, 2)  # [B, O, T1', T2']
+
+
+class TiledMemristorConv2d(nn.Module):
+    """
+    Memristive 2d-convolution as im2col on a TiledMemristorLinear, so the rows are
+    split into memristor_inputs-sized tiles with one ADC per tile like the linear.
+    Currently, supports groups==1 and no dilation.
+
+    Row ordering of the im2col matrix (same as F.unfold and weight.flatten(1)):
+    row = c * k0 * k1 + i * k1 + j for in-channel c, kernel offset (i, j).
+    """
+
+    def __init__(
+        self,
+        *,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: Union[int, Tuple[int, int]],
+        stride: Union[int, Tuple[int, int]],
+        padding: Union[int, Tuple[int, int], Literal["same", "valid"]] = 0,
+        padding_mode: Literal["zeros", "reflect", "replicate", "circular"] = "zeros",
+        groups: int,
+        weight_precision: int,
+        converter_hardware_settings: DacAdcHardwareSettings,
+        memristor_inputs: int,
+        memristor_outputs: int,
+        bias: bool = True,
+    ):
+        super().__init__()
+
+        assert in_channels > 0
+        self.in_channels = in_channels
+        assert out_channels > 0
+        self.out_channels = out_channels
+        assert groups == 1, "TiledMemristorConv2d currently only supports groups == 1"
+        self.groups = groups
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        assert all(x > 0 for x in kernel_size)
+        self.kernel_size = kernel_size
+        if isinstance(padding, int):
+            padding = (padding, padding)
+
+        if isinstance(padding, tuple):
+            assert all(x >= 0 for x in padding)
+        else:
+            assert padding in ["same", "valid"]
+        self.padding = padding
+        assert padding_mode in ["zeros", "reflect", "replicate", "circular"]
+        self.padding_mode = padding_mode
+
+        if isinstance(stride, int):
+            stride = (stride, stride)
+        assert all(x > 0 for x in stride)
+        self.stride = stride
+
+        assert weight_precision > 0
+        self.weight_precision = weight_precision
+        self.memristor_inputs = memristor_inputs
+        self.memristor_outputs = memristor_outputs
+
+        # the conv bias stays digital, so the linear gets none
+        self.linear = TiledMemristorLinear(
+            in_features=in_channels * kernel_size[0] * kernel_size[1],
+            out_features=out_channels,
+            weight_precision=weight_precision,
+            converter_hardware_settings=converter_hardware_settings,
+            memristor_inputs=memristor_inputs,
+            memristor_outputs=memristor_outputs,
+            bias=False,
+        )
+        self.converter = self.linear.converter
+
+        self.initialized = False
+        if bias is True:
+            self.bias = nn.Parameter(torch.empty((out_channels,)), requires_grad=True)
+        else:
+            self.bias = None
+
+    @property
+    def memristors(self):
+        return self.linear.memristors
+
+    @property
+    def input_factor(self):
+        return self.linear.input_factor
+
+    @property
+    def output_factor(self):
+        return self.linear.output_factor
+
+    def init_from_conv_quant(
+        self,
+        activation_quant: ActivationQuantizer,
+        conv_quant: Conv2dQuant,
+        num_cycles_init: int,
+        correction_settings: Optional[CycleCorrectionSettings],
+    ):
+        assert getattr(conv_quant, "groups", 1) == 1
+        quant_weights = conv_quant.weight_quantizer(
+            conv_quant.weight
+        ).detach()  # [out, in, k[0], k[1]]
+        assert tuple(quant_weights.shape) == (
+            self.out_channels,
+            self.in_channels,
+            *self.kernel_size,
+        ), quant_weights.shape
+        # flatten to [out, in * k[0] * k[1]], same row order as the unfold in forward
+        quant_weights = quant_weights.reshape(self.out_channels, -1)
+        self.bias = conv_quant.bias
+
+        self.linear.init_from_quantized_weights(
+            activation_quant=activation_quant,
+            quant_weights=quant_weights,
+            weight_scale=conv_quant.weight_quantizer.scale,
+            bias=None,
+            num_cycles_init=num_cycles_init,
+            correction_settings=correction_settings,
+        )
+        self.initialized = True
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Applies 2d-convolution.
+
+        :param inputs: [B, C, H, W]
+        :return: [B, C', H', W']
+        """
+        assert self.initialized
+        batch_size = inputs.shape[0]
+
+        if isinstance(self.padding, tuple):
+            padding_amount = self.padding
+        elif self.padding == "same":
+            padding_amount = (self.kernel_size[0] // 2, self.kernel_size[1] // 2)
+        elif self.padding == "valid":
+            padding_amount = (0, 0)
+        else:
+            raise ValueError(f"Unknown padding mode: {self.padding}")
+        if any(x > 0 for x in padding_amount):
+            mode = "constant" if self.padding_mode == "zeros" else self.padding_mode
+            inputs = F.pad(
+                inputs,
+                (
+                    padding_amount[1],
+                    padding_amount[1],
+                    padding_amount[0],
+                    padding_amount[0],
+                ),
+                mode=mode,
+            )
+
+        h_out = (inputs.shape[2] - self.kernel_size[0]) // self.stride[0] + 1
+        w_out = (inputs.shape[3] - self.kernel_size[1]) // self.stride[1] + 1
+        # im2col: [B, C * k[0] * k[1], H' * W'] -> [B, H' * W', C * k[0] * k[1]]
+        cols = F.unfold(inputs, self.kernel_size, stride=self.stride).transpose(1, 2)
+        out = self.linear(cols)  # [B, H' * W', O], DAC/ADC/tiling inside
+        if self.bias is not None:
+            out = out + self.bias
+        return out.transpose(1, 2).reshape(
+            batch_size, self.out_channels, h_out, w_out
+        )  # [B, O, H', W']

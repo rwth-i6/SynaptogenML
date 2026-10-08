@@ -178,12 +178,38 @@ class TiledMemristorLinear(nn.Module):
         correction_settings: Optional[CycleCorrectionSettings],
     ):
         quant_weights = linear_quant.weight_quantizer(linear_quant.weight).detach()
-        self.bias = linear_quant.bias
+        self.init_from_quantized_weights(
+            activation_quant=activation_quant,
+            quant_weights=quant_weights,
+            weight_scale=linear_quant.weight_quantizer.scale,
+            bias=linear_quant.bias,
+            num_cycles_init=num_cycles_init,
+            correction_settings=correction_settings,
+        )
+
+    def init_from_quantized_weights(
+        self,
+        activation_quant: ActivationQuantizer,
+        quant_weights: torch.Tensor,
+        weight_scale: torch.Tensor,
+        bias: Optional[torch.Tensor],
+        num_cycles_init: int,
+        correction_settings: Optional[CycleCorrectionSettings],
+    ):
+        """
+        Program the tiles from an already fake-quantized weight.
+        Former body of init_from_linear_quant; also used by TiledMemristorConv2d (im2col).
+
+        :param quant_weights: fake-quantized weight [out, in] (multiples of weight_scale)
+        :param weight_scale: scale of the weight quantizer
+        :param bias: float bias [out] or None, kept as is
+        """
+        self.bias = bias
         # handle weight sign separately because integer division with negative numbers does not work as expected
         # for this case here, e.g. -5 // 2 = -3 instead of -2
         weights_sign = torch.sign(quant_weights)
         quant_weights_scaled_abs = torch.round(
-            torch.absolute(quant_weights / linear_quant.weight_quantizer.scale)
+            torch.absolute(quant_weights / weight_scale)
         ).to(dtype=torch.int32)
 
         # the (bit-plane, tile) pairs are programmed either one by one (serial
@@ -268,11 +294,7 @@ class TiledMemristorLinear(nn.Module):
             requires_grad=False,
         )
         self.output_factor = torch.nn.Parameter(
-            (
-                linear_quant.weight_quantizer.scale
-                * activation_quant.scale
-                * activation_quant.quant_max
-            ),
+            (weight_scale * activation_quant.scale * activation_quant.quant_max),
             requires_grad=False,
         )
         self.initialized = True
