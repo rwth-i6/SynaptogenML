@@ -120,6 +120,28 @@ def has_readout_noise() -> bool:
     return _READOUT_NOISE_MODEL != "off"
 
 
+# Opt-in *linear I-V oracle*. Off (default) = the readout current follows the
+# LLRS/HHRS polynomials. On = every cell reads out as an ideal resistor with its
+# conductance at U0 (the voltage the cell model defines resistance at), i.e. the
+# polynomials are replaced by their secants through U0. Applied at forward time,
+# so it works on already-programmed / loaded modules and leaves the programmed
+# cell states untouched; programming physics, readout noise and DAC/ADC are not
+# changed. Enable without code changes via:
+#   SYN_LINEAR_IV=1 python -m ...
+_LINEAR_IV = _truthy(os.environ.get("SYN_LINEAR_IV", ""))
+
+
+def set_linear_iv(enabled: bool = True) -> None:
+    """Enable (default) or disable the opt-in linear I-V oracle readout."""
+    global _LINEAR_IV
+    _LINEAR_IV = bool(enabled)
+
+
+def is_linear_iv() -> bool:
+    """Whether the linear I-V oracle readout is currently enabled."""
+    return _LINEAR_IV
+
+
 # Opt-in parallel *programming* (cell conversion) path. 0 (default) = serial,
 # behavior-identical to the historical code. N > 0 programs the independent
 # (bit-plane, tile) cell-array pairs of a layer in N worker processes, each
