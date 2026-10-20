@@ -9,8 +9,8 @@ import torch._dynamo
 from torch import nn
 from torch.utils._triton import has_triton
 
-from .. import fast_uses_compile, is_fast_inference
-from ..synaptogen import CellArrayCPU
+from .. import fast_uses_compile, is_fast_inference, is_linear_iv
+from ..synaptogen import CellArrayCPU, default_params
 from .util import poly_mul, poly_mul_horner, randn_broadcast
 
 
@@ -118,6 +118,16 @@ def _cuda_capability_needs_jit_fallback(device: torch.device) -> bool:
     return torch.cuda.get_device_capability(device) < (7, 0)
 
 
+def _secant_linearized(poly: torch.Tensor) -> torch.Tensor:
+    """Linear I-V stand-in for a readout polynomial (ascending coefficients):
+    ``I = G * U`` with ``G = poly(U0) / U0``, the conductance at the voltage the
+    cell model defines resistance at (``CellParams.G_LLRS`` / ``G_HHRS``)."""
+    u0 = float(default_params.U0)
+    exponents = torch.arange(poly.shape[-1], device=poly.device)
+    conductance = (poly * u0**exponents).sum() / u0
+    return torch.stack([torch.zeros_like(conductance), conductance])
+
+
 class MemristorArray(nn.Module):
     """
     Torch Module for a Memristor Array.
@@ -182,13 +192,24 @@ class MemristorArray(nn.Module):
         self.init_resistance_states(cells)
         self.r.data = torch.Tensor(cells.r).resize(*self.r.shape)
 
+    def readout_polys(self):
+        """The (low, high) polynomials the forward evaluates: the stored ones, or
+        their secants through U0 when the linear I-V oracle is enabled."""
+        if is_linear_iv():
+            return (
+                _secant_linearized(self.resistance_weighted_poly_low),
+                _secant_linearized(self.resistance_weighted_poly_high),
+            )
+        return self.resistance_weighted_poly_low, self.resistance_weighted_poly_high
+
     def compute_raw_output(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         :param inputs: [..., I]
         :return [..., I, O]
         """
-        result_low = poly_mul(self.resistance_weighted_poly_low, inputs).unsqueeze(-1)
-        result_high = poly_mul(self.resistance_weighted_poly_high, inputs).unsqueeze(-1)
+        low_poly, high_poly = self.readout_polys()
+        result_low = poly_mul(low_poly, inputs).unsqueeze(-1)
+        result_high = poly_mul(high_poly, inputs).unsqueeze(-1)
         # result_low * (1 - r) + result_high * r, accumulated in place to avoid a
         # second full [..., I, O] temporary. Same arithmetic -> bit-identical.
         result_raw = result_low * (1 - self.r)  # [..., ...A, I, O]
@@ -253,11 +274,12 @@ class MemristorArray(nn.Module):
         raw_shape = torch.broadcast_shapes(inputs.shape + (1,), self.r.shape)
         trailing_shape = raw_shape[self.broadcast_noise_dims :]
         noise_sample = torch.randn(trailing_shape, device=inputs.device)
+        low_poly, high_poly = self.readout_polys()
 
         if not fast_uses_compile():
             return _fused_memristor_forward(
-                self.resistance_weighted_poly_low,
-                self.resistance_weighted_poly_high,
+                low_poly,
+                high_poly,
                 self.r,
                 inputs,
                 noise_sample,
@@ -270,12 +292,8 @@ class MemristorArray(nn.Module):
         if _cuda_capability_needs_jit_fallback(inputs.device):
             # Triton (Inductor's CUDA backend) needs capability >= 7.0; fall back to
             # the TorchScript(NNC)-fused core instead of crashing on pre-Volta GPUs.
-            result_low = poly_mul_horner(
-                self.resistance_weighted_poly_low, inputs
-            ).unsqueeze(-1)
-            result_high = poly_mul_horner(
-                self.resistance_weighted_poly_high, inputs
-            ).unsqueeze(-1)
+            result_low = poly_mul_horner(low_poly, inputs).unsqueeze(-1)
+            result_high = poly_mul_horner(high_poly, inputs).unsqueeze(-1)
             abs_in = torch.abs(inputs.unsqueeze(-1)) + self.noise_minimum_voltage
             return _get_jit_fused_core()(
                 result_low,
@@ -289,8 +307,8 @@ class MemristorArray(nn.Module):
             )
 
         return _get_compiled_fused_forward()(
-            self.resistance_weighted_poly_low,
-            self.resistance_weighted_poly_high,
+            low_poly,
+            high_poly,
             self.r,
             inputs,
             noise_sample,
