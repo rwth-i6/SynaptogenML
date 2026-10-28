@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 import torch
 
+import synaptogen_ml
 import synaptogen_ml.synaptogen as syn
 from synaptogen_ml.memristor_modules.config import CycleCorrectionSettings
 from synaptogen_ml.memristor_modules.conv import MemristorConv1d, MemristorConv2d
@@ -23,7 +24,10 @@ from synaptogen_ml.memristor_modules.linear import (
     MemristorLinear,
     TiledMemristorLinear,
 )
-from synaptogen_ml.memristor_modules.memristor import DacAdcHardwareSettings
+from synaptogen_ml.memristor_modules.memristor import (
+    DacAdcHardwareSettings,
+    MemristorArray,
+)
 from synaptogen_ml.quant_modules import (
     ActivationQuantizer,
     Conv1DQuant,
@@ -152,6 +156,58 @@ def test_tiled_linear(num_cycles_init, correction, hw, bound):
         act, lin, num_cycles_init=num_cycles_init, correction_settings=correction
     )
     assert relative_error(memristor_output(mem, x), ref) < bound
+
+
+@pytest.mark.fidelity
+def test_linear_iv_is_ohmic():
+    """With the linear I-V oracle every cell reads out as a resistor with its
+    conductance at U0, for any programmed state."""
+    seed_all(0)
+    cells = syn.CellArrayCPU(12)
+    array = MemristorArray(4, 3)
+    array.init_from_cell_array_input_major(cells)
+    voltages = (torch.rand(5, 4) * 2 - 1) * 0.6
+    conductance = (1 - array.r) * float(cells.params.G_LLRS) + array.r * float(
+        cells.params.G_HHRS
+    )
+
+    synaptogen_ml.set_linear_iv(True)
+    try:
+        raw = array.compute_raw_output(voltages)
+    finally:
+        synaptogen_ml.set_linear_iv(False)
+    assert torch.allclose(raw, voltages.unsqueeze(-1) * conductance, rtol=1e-4, atol=0)
+
+
+@pytest.mark.fidelity
+def test_tiled_linear_linear_iv():
+    """Signed inputs spanning the whole DAC range are where the I-V non-linearity
+    costs most (negative voltages are compressed by up to ~12%). With ideal
+    programming the linear oracle leaves only readout noise and converter
+    quantization (around 0.03), full physics lands around 0.08."""
+    seed_all(0)
+    act = act_quant()
+    x = torch.rand(32, 256) * 2 - 1
+    lin = LinearQuant(in_features=256, out_features=128, **QUANT_KW)
+    ref = calibrate(lin, act, x)
+
+    mem = TiledMemristorLinear(
+        in_features=256,
+        out_features=128,
+        weight_precision=WEIGHT_PRECISION,
+        converter_hardware_settings=DacAdcHardwareSettings(**HW_IDEAL),
+        memristor_inputs=128,
+        memristor_outputs=128,
+    )
+    mem.init_from_linear_quant(act, lin, num_cycles_init=0, correction_settings=IDEAL)
+    full = relative_error(memristor_output(mem, x), ref)
+
+    synaptogen_ml.set_linear_iv(True)
+    try:
+        linear = relative_error(memristor_output(mem, x), ref)
+    finally:
+        synaptogen_ml.set_linear_iv(False)
+    assert linear < 0.05 < full
 
 
 @pytest.mark.fidelity

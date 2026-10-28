@@ -167,16 +167,18 @@ def build_conv2d():
 
 
 @pytest.mark.fast
+@pytest.mark.parametrize("linear_iv", [False, True])
 @pytest.mark.parametrize(
     "build", [build_linear, build_tiled_linear, build_conv1d, build_conv2d]
 )
-def test_fast_path_matches_eager_no_compile(build):
+def test_fast_path_matches_eager_no_compile(build, linear_iv):
     """Run the eager and the fast path on the same programmed instance, reseeding
     torch before each forward so the readout-noise draw is identical."""
     torch.manual_seed(0)
     module, x = build()
 
     synaptogen_ml.set_fast_compile(False)
+    synaptogen_ml.set_linear_iv(linear_iv)
     try:
         synaptogen_ml.set_fast_inference(False)
         torch.manual_seed(FORWARD_SEED)
@@ -190,6 +192,7 @@ def test_fast_path_matches_eager_no_compile(build):
     finally:
         synaptogen_ml.set_fast_compile(True)
         synaptogen_ml.set_fast_inference(False)
+        synaptogen_ml.set_linear_iv(False)
 
     # post-ADC quantization can turn ~1e-6 analog drift into rare 1-step flips
     assert torch.allclose(fast, eager, atol=1e-4, rtol=1e-3)
