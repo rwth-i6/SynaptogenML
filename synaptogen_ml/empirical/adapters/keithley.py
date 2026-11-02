@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..dataset import IVDataset, from_hysteresis_loops, segment_loop
+from ..dataset import IVDataset, from_hysteresis_loops
 
 COLUMNS = ("voltage_source", "voltage_probe", "current", "resistance")
 V_SOURCE, V_PROBE, CURRENT, RESISTANCE = range(4)

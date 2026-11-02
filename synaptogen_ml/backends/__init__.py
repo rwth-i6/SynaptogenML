@@ -12,4 +12,6 @@ touching the Synaptogen code.
 from .base import CellBackend
 from .synaptogen_backend import SynaptogenBackend
 
+# the measurement-based backend lives in synaptogen_ml.empirical (torch-free
+# package); import it from there: ``from synaptogen_ml.empirical import EmpiricalBackend``
 __all__ = ["CellBackend", "SynaptogenBackend"]

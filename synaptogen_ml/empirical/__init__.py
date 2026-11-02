@@ -13,5 +13,12 @@ programming worker processes.
 """
 
 from .dataset import IVDataset, from_hysteresis_loops, from_state_sweeps, segment_loop
+from .backend import EmpiricalBackend
 
-__all__ = ["IVDataset", "from_hysteresis_loops", "from_state_sweeps", "segment_loop"]
+__all__ = [
+    "IVDataset",
+    "EmpiricalBackend",
+    "from_hysteresis_loops",
+    "from_state_sweeps",
+    "segment_loop",
+]

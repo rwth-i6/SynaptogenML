@@ -1,7 +1,7 @@
 __all__ = ["IVDataset", "from_state_sweeps", "from_hysteresis_loops", "segment_loop"]
 
 import json
-import os
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -190,7 +190,9 @@ class IVDataset:
     def median_curve(self, state: Union[str, int]) -> np.ndarray:
         """``float32[P]`` NaN-aware median over devices and cycles."""
         sel = self.I[:, :, self.state_index(state)].reshape(-1, self.n_points)
-        with np.errstate(all="ignore"):
+        with warnings.catch_warnings():
+            # grid points no curve covers are NaN by definition, not an error
+            warnings.simplefilter("ignore", category=RuntimeWarning)
             return np.nanmedian(sel, axis=0).astype(np.float32)
 
     def coverage(

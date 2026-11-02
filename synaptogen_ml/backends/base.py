@@ -1,9 +1,19 @@
 __all__ = ["CellBackend", "PairJobs", "ProgrammedPairs"]
 
-from typing import Any, List, Protocol, Sequence, Tuple, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    List,
+    Protocol,
+    Sequence,
+    Tuple,
+    runtime_checkable,
+)
 
 import numpy as np
-from torch import nn
+
+if TYPE_CHECKING:  # keep this module importable without torch (programming workers)
+    from torch import nn
 
 # one job per (bit-plane, tile) paired array: flat ``positive_weights`` and
 # ``negative_weights`` vectors in {0, 1}, input-major, as every
@@ -30,7 +40,7 @@ class CellBackend(Protocol):
         out_features: int,
         *,
         additional_axes: Sequence[int] = (),
-    ) -> nn.Module:
+    ) -> "nn.Module":
         """A differential (pos - neg) array module with ``r`` of shape
         ``additional_axes + (in_features, out_features)`` whose
         ``init_from_paired_cell_array_input_major(pos, neg)`` consumes this

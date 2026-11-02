@@ -183,11 +183,13 @@ def _cuda_capability_needs_jit_fallback(device: torch.device) -> bool:
     return torch.cuda.get_device_capability(device) < (7, 0)
 
 
-def _secant_linearized(poly: torch.Tensor) -> torch.Tensor:
+def _secant_linearized(poly: torch.Tensor, u0: float = None) -> torch.Tensor:
     """Linear I-V stand-in for a readout polynomial (ascending coefficients):
     ``I = G * U`` with ``G = poly(U0) / U0``, the conductance at the voltage the
-    cell model defines resistance at (``CellParams.G_LLRS`` / ``G_HHRS``)."""
-    u0 = float(default_params.U0)
+    cell model defines resistance at (``CellParams.G_LLRS`` / ``G_HHRS``), or
+    at ``u0`` when the programmed parameters define their own read voltage."""
+    if u0 is None:
+        u0 = float(default_params.U0)
     exponents = torch.arange(poly.shape[-1], device=poly.device)
     conductance = (poly * u0**exponents).sum() / u0
     return torch.stack([torch.zeros_like(conductance), conductance])
@@ -242,6 +244,9 @@ class MemristorArray(nn.Module):
 
         self.in_features = in_features
         self.out_features = out_features
+        # read voltage the linear-IV oracle takes its secant at; overwritten by
+        # programmed parameters that define their own (empirical backend)
+        self.u0 = float(default_params.U0)
 
     @property
     def BW(self):
@@ -266,6 +271,7 @@ class MemristorArray(nn.Module):
         HHRS = torch.Tensor(cells.params.HHRS)
         HHRS = torch.flip(HHRS, dims=[0])
         self.resistance_weighted_poly_high.data = HHRS
+        self.u0 = float(getattr(cells.params, "U0", default_params.U0))
 
     def init_from_cell_array_input_major(self, cells: CellArrayCPU):
         self.init_resistance_states(cells)
@@ -276,8 +282,8 @@ class MemristorArray(nn.Module):
         their secants through U0 when the linear I-V oracle is enabled."""
         if is_linear_iv():
             return (
-                _secant_linearized(self.resistance_weighted_poly_low),
-                _secant_linearized(self.resistance_weighted_poly_high),
+                _secant_linearized(self.resistance_weighted_poly_low, self.u0),
+                _secant_linearized(self.resistance_weighted_poly_high, self.u0),
             )
         return self.resistance_weighted_poly_low, self.resistance_weighted_poly_high
 
