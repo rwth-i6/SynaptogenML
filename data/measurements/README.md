@@ -3,7 +3,11 @@
 Ta/WOx/PCMO and W/WOx/PCMO crossbar devices, integrated as 1T1R cells on the
 Neurotec chip. Each file contains **the first IV loop of every device**
 (pristine devices, one loop each). Analysis: `python tools/analyze_iv_dat.py
-data/measurements/*.dat --plots data/measurements/plots`.
+data/measurements/*.dat --plots data/measurements/plots`. Loading for the
+simulator: `synaptogen_ml.empirical.adapters.from_keithley_iv_dat(path,
+device_family="W/WOx/PCMO")` gives an `IVDataset` with one cycle and the
+states `pristine`, `LRS`, `post_reset_pos` (the three ramps); the first 9 W
+devices can be split off with `device_indices`.
 
 | File | Devices | Rows/device | Loop | Date | Hold per point |
 |---|---|---|---|---|---|

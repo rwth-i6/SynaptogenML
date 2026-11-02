@@ -41,4 +41,5 @@ markers = [
   "programming: Tests for the cell programming helpers and the opt-in parallel programming path",
   "readout: Tests for the selectable readout-noise models (legacy / physical / off)",
   "backends: Tests for the pluggable device-backend seam (SynaptogenBackend equals the default path)",
+  "empirical: Tests for the measurement-based device description (IVDataset, adapters, synthetic data, EmpiricalBackend)",
 ]

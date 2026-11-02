@@ -18,44 +18,20 @@ Usage:
 
 import argparse
 import os
+import sys
 
 import numpy as np
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 
 # ----------------------------------------------------------------- parsing ---
-def load_table(path):
-    rows = []
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            parts = line.strip().split("\t")
-            if len(parts) != 4:
-                continue
-            try:
-                rows.append([float(p) for p in parts])
-            except ValueError:
-                continue  # header line
-    return np.array(rows)
-
-
-def split_devices(table):
-    """Split the concatenated table into one array per device (loop)."""
-    vs = table[:, 0]
-    starts = [0]
-    for i in range(1, len(vs) - 1):
-        if vs[i] == 0.0 and vs[i + 1] < 0:
-            starts.append(i)
-    starts.append(len(vs))
-    return [table[a:b] for a, b in zip(starts[:-1], starts[1:])]
-
-
-def branches(dev):
-    """The three ramps of one loop:
-    0 = ``0 -> Vmin`` (pristine state, going negative),
-    1 = ``Vmin -> Vmax`` (after SET: LRS, crosses 0 V),
-    2 = ``Vmax -> 0`` (after RESET, positive polarity only)."""
-    vs = dev[:, 0]
-    i_min, i_max = int(np.argmin(vs)), int(np.argmax(vs))
-    return dev[: i_min + 1], dev[i_min : i_max + 1], dev[i_max:]
+# the parser lives in the package so the empirical backend and this tool agree
+from synaptogen_ml.empirical.adapters.keithley import (  # noqa: E402
+    branches,
+    load_table,
+    split_devices,
+)
 
 
 def current_at(branch, v):
