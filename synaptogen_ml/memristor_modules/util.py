@@ -63,13 +63,24 @@ def randn_broadcast(
     return broadcasted_tensor
 
 
-def compute_correction_factor(ideal: bool = False):
+def compute_correction_factor(ideal: bool = False, trials: int = 1000):
+    """Estimate ``hardware_output_current_scaling`` for the Synaptogen cell
+    model on the 0.6 V DAC window: the factor mapping the mean differential
+    read current of a unit weight (one SET cell minus one RESET cell) back to
+    1, averaged over ``trials`` fresh 200-cell arrays.
+
+    :param ideal: estimate for ideal programming (``r`` set to exactly 0/1)
+        instead of stochastic ``applyVoltage`` programming.
+    :param trials: number of independent 200-cell arrays to average over.
+    :return: ``(paired, single)`` -- the factor for a differential pair (what the
+        crossbar modules need) and for a single array; both are also printed.
+    """
     from ..synaptogen import CellArrayCPU, Iread
 
     correction_factors_paired = []
     correction_factors_single = []
 
-    for i in range(1000):
+    for _ in range(trials):
         estimation_cells = CellArrayCPU(200)
 
         zero_offsets = []
@@ -111,5 +122,8 @@ def compute_correction_factor(ideal: bool = False):
         correction_factors_paired.append(correction_factor_paired)
         correction_factors_single.append(correction_factor_single)
 
-    print(f"correction factor paired: {np.mean(correction_factors_paired)}")
-    print(f"correction factor single: {np.mean(correction_factors_single)}")
+    paired = float(np.mean(correction_factors_paired))
+    single = float(np.mean(correction_factors_single))
+    print(f"correction factor paired: {paired}")
+    print(f"correction factor single: {single}")
+    return paired, single

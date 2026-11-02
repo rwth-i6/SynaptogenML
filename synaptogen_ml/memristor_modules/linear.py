@@ -1,7 +1,7 @@
 __all__ = ["MemristorLinear", "TiledMemristorLinear"]
 import torch
 from torch import nn
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .. import fast_programming_workers
 from ..programming import program_pair, program_pairs
@@ -9,6 +9,9 @@ from ..quant_modules import LinearQuant, ActivationQuantizer
 from ..synaptogen import CellArrayCPU
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
 from .config import CycleCorrectionSettings
+
+if TYPE_CHECKING:
+    from ..backends import CellBackend
 
 
 class MemristorLinear(nn.Module):
@@ -134,9 +137,15 @@ class TiledMemristorLinear(nn.Module):
         memristor_inputs: int,
         memristor_outputs: int,
         bias: bool = True,
+        backend: Optional["CellBackend"] = None,
     ):
+        """
+        :param backend: device model that creates the paired arrays and programs
+            the cells. None (default) is the built-in Synaptogen path, unchanged.
+        """
         super().__init__()
         self.weight_precision = weight_precision
+        self.backend = backend
         self.input_tiling = (in_features + memristor_inputs - 1) // memristor_inputs
         self.output_tiling = (out_features + memristor_outputs - 1) // memristor_outputs
         self.memristor_inputs = memristor_inputs
@@ -145,9 +154,12 @@ class TiledMemristorLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
 
+        make_array = (
+            PairedMemristorArrayV2 if backend is None else backend.make_paired_array
+        )
         self.memristors = torch.nn.ModuleList(
             [
-                PairedMemristorArrayV2(memristor_inputs, memristor_outputs)
+                make_array(memristor_inputs, memristor_outputs)
                 for _ in range(
                     (weight_precision - 1) * self.input_tiling * self.output_tiling
                 )
@@ -188,10 +200,14 @@ class TiledMemristorLinear(nn.Module):
 
         # the (bit-plane, tile) pairs are programmed either one by one (serial
         # default -- streams each pair through program_pair exactly like the
-        # historical inline code, keeping peak memory low) or, with fast
-        # programming enabled, collected and dispatched to worker processes
+        # historical inline code, keeping peak memory low) or collected and
+        # handed to a batch programmer: the shared helper with fast programming
+        # enabled (worker processes), or the backend when one is set
         current_scaling = self.converter.hs.hardware_output_current_scaling
-        parallel = fast_programming_workers() > 0
+        parallel = fast_programming_workers() > 0 or self.backend is not None
+        programmer = (
+            program_pairs if self.backend is None else self.backend.program_pairs
+        )
         pair_jobs = []
         pair_indices = []
         for i, bit in enumerate(reversed(range(0, self.weight_precision - 1))):
@@ -253,7 +269,7 @@ class TiledMemristorLinear(nn.Module):
                         )
 
         if parallel:
-            programmed = program_pairs(
+            programmed = programmer(
                 pair_jobs, num_cycles_init, correction_settings, current_scaling
             )
             for index, (positive_cells, negative_cells) in zip(

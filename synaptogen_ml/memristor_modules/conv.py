@@ -1,5 +1,5 @@
 __all__ = ["MemristorConv1d", "MemristorConv2d"]
-from typing import Literal, Tuple, Union, Optional
+from typing import TYPE_CHECKING, Literal, Tuple, Union, Optional
 
 import torch
 from torch import nn
@@ -9,6 +9,9 @@ from ..programming import program_pairs
 from ..quant_modules import ActivationQuantizer, Conv1DQuant, Conv2dQuant
 from .memristor import DacAdcHardwareSettings, DacAdcPair, PairedMemristorArrayV2
 from .config import CycleCorrectionSettings
+
+if TYPE_CHECKING:
+    from ..backends import CellBackend
 
 
 class MemristorConv1d(nn.Module):
@@ -30,8 +33,17 @@ class MemristorConv1d(nn.Module):
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
         bias: bool = True,
+        backend: Optional["CellBackend"] = None,
     ):
+        """
+        :param backend: device model that creates the paired arrays and programs
+            the cells. None (default) is the built-in Synaptogen path, unchanged.
+        """
         super().__init__()
+        self.backend = backend
+        make_array = (
+            PairedMemristorArrayV2 if backend is None else backend.make_paired_array
+        )
 
         assert in_channels > 0
         self.in_channels = in_channels
@@ -58,7 +70,7 @@ class MemristorConv1d(nn.Module):
 
         self.memristors = torch.nn.ModuleList(
             [
-                PairedMemristorArrayV2(
+                make_array(
                     in_features=kernel_size,
                     out_features=1,
                     additional_axes=(
@@ -127,8 +139,11 @@ class MemristorConv1d(nn.Module):
 
         # program all bit-plane pairs via the shared helper (serial default is
         # step-identical to the former inline code; parallel is opt-in via
-        # synaptogen_ml.set_fast_programming)
-        programmed = program_pairs(
+        # synaptogen_ml.set_fast_programming) or via the backend when one is set
+        programmer = (
+            program_pairs if self.backend is None else self.backend.program_pairs
+        )
+        programmed = programmer(
             pair_jobs,
             num_cycles_init,
             correction_settings,
@@ -227,8 +242,17 @@ class MemristorConv2d(nn.Module):
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
         bias: bool = True,
+        backend: Optional["CellBackend"] = None,
     ):
+        """
+        :param backend: device model that creates the paired arrays and programs
+            the cells. None (default) is the built-in Synaptogen path, unchanged.
+        """
         super().__init__()
+        self.backend = backend
+        make_array = (
+            PairedMemristorArrayV2 if backend is None else backend.make_paired_array
+        )
 
         assert in_channels > 0
         self.in_channels = in_channels
@@ -264,7 +288,7 @@ class MemristorConv2d(nn.Module):
 
         self.memristors = torch.nn.ModuleList(
             [
-                PairedMemristorArrayV2(
+                make_array(
                     in_features=kernel_size[1],
                     out_features=1,
                     additional_axes=(
@@ -299,7 +323,7 @@ class MemristorConv2d(nn.Module):
         correction_settings: Optional[CycleCorrectionSettings],
     ):
         # should be derviable from MemristorConv1d
-        assert correction_settings is None, (
+        assert correction_settings is None or self.backend is not None, (
             "correction_settings not implemented for Conv2d"
         )
         quant_weights = conv_quant.weight_quantizer(
@@ -339,8 +363,11 @@ class MemristorConv2d(nn.Module):
 
         # program all bit-plane pairs via the shared helper (serial default is
         # step-identical to the former inline code; parallel is opt-in via
-        # synaptogen_ml.set_fast_programming)
-        programmed = program_pairs(
+        # synaptogen_ml.set_fast_programming) or via the backend when one is set
+        programmer = (
+            program_pairs if self.backend is None else self.backend.program_pairs
+        )
+        programmed = programmer(
             pair_jobs,
             num_cycles_init,
             correction_settings,
@@ -478,8 +505,17 @@ class SingleKernelMemristorConv2d(nn.Module):
         weight_precision: int,
         converter_hardware_settings: DacAdcHardwareSettings,
         bias: bool = True,
+        backend: Optional["CellBackend"] = None,
     ):
+        """
+        :param backend: device model that creates the paired arrays and programs
+            the cells. None (default) is the built-in Synaptogen path, unchanged.
+        """
         super().__init__()
+        self.backend = backend
+        make_array = (
+            PairedMemristorArrayV2 if backend is None else backend.make_paired_array
+        )
 
         assert in_channels > 0
         self.in_channels = in_channels
@@ -508,7 +544,7 @@ class SingleKernelMemristorConv2d(nn.Module):
 
         self.memristors = torch.nn.ModuleList(
             [
-                PairedMemristorArrayV2(
+                make_array(
                     in_features=in_channels * kernel_size[0] * kernel_size[1],
                     out_features=out_channels,
                 )
@@ -537,7 +573,7 @@ class SingleKernelMemristorConv2d(nn.Module):
         correction_settings: Optional[CycleCorrectionSettings],
     ):
         # should be deriveable from MemristorConv1d
-        assert correction_settings is None, (
+        assert correction_settings is None or self.backend is not None, (
             "correction_settings not implemented for SingleKernelMemristorConv2d"
         )
         quant_weights = conv_quant.weight_quantizer(
@@ -587,8 +623,11 @@ class SingleKernelMemristorConv2d(nn.Module):
 
         # program all bit-plane pairs via the shared helper (serial default is
         # step-identical to the former inline code; parallel is opt-in via
-        # synaptogen_ml.set_fast_programming)
-        programmed = program_pairs(
+        # synaptogen_ml.set_fast_programming) or via the backend when one is set
+        programmer = (
+            program_pairs if self.backend is None else self.backend.program_pairs
+        )
+        programmed = programmer(
             pair_jobs,
             num_cycles_init,
             correction_settings,
