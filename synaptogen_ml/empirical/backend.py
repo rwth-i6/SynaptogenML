@@ -181,6 +181,7 @@ class EmpiricalBackend(CellBackend):
         }
         self._warned_reuse = False
         self._warned_single_cycle = False
+        self._warned_cycles = set()
         self.device_use_counts = np.zeros(dataset.n_devices, dtype=np.int64)
         self.cells_programmed = 0
 
@@ -316,11 +317,14 @@ class EmpiricalBackend(CellBackend):
         finite = np.isfinite(self._current[state])  # [D, C]
         allowed = self.dataset.cycle_index >= num_cycles_init
         if not (finite & allowed).any():
-            log.warning(
-                "no cycle with cycle_index >= %d for state %r; using all cycles",
-                num_cycles_init,
-                state,
-            )
+            if (state, num_cycles_init) not in self._warned_cycles:
+                self._warned_cycles.add((state, num_cycles_init))
+                log.warning(
+                    "no cycle with cycle_index >= %d for state %r; using all cycles "
+                    "(reported once per backend)",
+                    num_cycles_init,
+                    state,
+                )
             allowed = np.ones_like(allowed)
         ok = finite & allowed
         counts = ok.sum(axis=1)
